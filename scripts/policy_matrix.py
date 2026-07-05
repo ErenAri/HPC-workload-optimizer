@@ -62,6 +62,21 @@ POLICIES = [
 
 ML_POLICIES = {"ML_BACKFILL_P50", "ML_BACKFILL_P10"}
 
+# Rough relative wall-time weights used to schedule the longest cells first
+# when running with --workers > 1 (better core packing; the sweep's wall time
+# approaches the single longest cell instead of an unlucky tail).
+_POLICY_COST = {
+    "ML_BACKFILL_P50": 100,
+    "ML_BACKFILL_P10": 100,
+    "CONSERVATIVE_BACKFILL_BASELINE": 80,
+    "FIFO_STRICT": 20,
+}
+_TRACE_COST = {"hpc2n": 4, "sdsc_sp2": 2, "ctc_sp2": 1}
+
+
+def _cell_cost(trace: dict, policy: str) -> int:
+    return _TRACE_COST.get(trace["key"], 1) * _POLICY_COST.get(policy, 5)
+
 
 def run_cell(trace: dict, policy: str) -> dict:
     import pandas as pd
@@ -133,10 +148,28 @@ def render_markdown(results: list[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _canonical_sort(results: list[dict]) -> list[dict]:
+    trace_order = {t["name"]: i for i, t in enumerate(TRACES)}
+    policy_order = {p: i for i, p in enumerate(POLICIES)}
+    return sorted(
+        results,
+        key=lambda row: (
+            trace_order.get(row["trace"], 99),
+            policy_order.get(row["policy"], 99),
+        ),
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--traces", default=",".join(t["key"] for t in TRACES))
     parser.add_argument("--policies", default=",".join(POLICIES))
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Run up to N cells as parallel processes (cells are independent).",
+    )
     args = parser.parse_args()
 
     trace_keys = set(args.traces.split(","))
@@ -153,26 +186,50 @@ def main() -> None:
         results = [row for row in prior if row["result"]["status"] == "ok"]
     done = {(row["trace"], row["policy"]) for row in results}
 
+    pending: list[tuple[dict, str]] = []
     for trace in TRACES:
         if trace["key"] not in trace_keys:
             continue
         for policy in policies:
-            label = f"{trace['name']} x {policy}"
             if (trace["name"], policy) in done:
-                print(f"[matrix] skipping {label} (already complete)", flush=True)
-                continue
-            print(f"[matrix] running {label} ...", flush=True)
+                print(f"[matrix] skipping {trace['name']} x {policy} (already complete)", flush=True)
+            else:
+                pending.append((trace, policy))
+
+    def record(trace_name: str, policy: str, cell: dict) -> None:
+        results.append({"trace": trace_name, "policy": policy, "result": cell})
+        wall = cell.get("wall_time_sec", "-")
+        print(f"[matrix] {trace_name} x {policy}: {cell['status']} (wall={wall}s)", flush=True)
+        # Persist incrementally so partial sweeps are usable.
+        ordered = _canonical_sort(results)
+        json_path.write_text(json.dumps(ordered, indent=2), encoding="utf-8")
+        md_path.write_text(render_markdown(ordered), encoding="utf-8")
+
+    if args.workers <= 1:
+        for trace, policy in pending:
+            print(f"[matrix] running {trace['name']} x {policy} ...", flush=True)
             try:
                 cell = run_cell(trace, policy)
             except Exception as exc:  # keep the sweep alive; record the failure
                 cell = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"}
-            results.append({"trace": trace["name"], "policy": policy, "result": cell})
-            status = cell["status"]
-            wall = cell.get("wall_time_sec", "-")
-            print(f"[matrix] {label}: {status} (wall={wall}s)", flush=True)
-            # Persist incrementally so partial sweeps are usable.
-            json_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
-            md_path.write_text(render_markdown(results), encoding="utf-8")
+            record(trace["name"], policy, cell)
+    else:
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+
+        # Longest-expected cells first so they don't trail the sweep alone.
+        pending.sort(key=lambda tp: _cell_cost(*tp), reverse=True)
+        with ProcessPoolExecutor(max_workers=args.workers) as pool:
+            futures = {}
+            for trace, policy in pending:
+                print(f"[matrix] queueing {trace['name']} x {policy} ...", flush=True)
+                futures[pool.submit(run_cell, trace, policy)] = (trace["name"], policy)
+            for future in as_completed(futures):
+                trace_name, policy = futures[future]
+                try:
+                    cell = future.result()
+                except Exception as exc:  # keep the sweep alive; record the failure
+                    cell = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"}
+                record(trace_name, policy, cell)
 
     print(f"[matrix] done: {json_path}")
     print(f"[matrix] done: {md_path}")
