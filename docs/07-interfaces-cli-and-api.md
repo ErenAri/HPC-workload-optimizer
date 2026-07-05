@@ -191,6 +191,12 @@ hpcopt simulate run --trace <dataset.parquet> --policy ML_BACKFILL_P50 --capacit
 hpcopt simulate run --trace <dataset.parquet> --policy ML_BACKFILL_P10 --capacity-cpus 64
 ```
 
+Supported `--policy` values: `FIFO_STRICT`, `EASY_BACKFILL_BASELINE`, `EASY_BACKFILL_TSAFRIR`
+(Tsafrir/Etsion/Feitelson 2007 user-history predictor), `CONSERVATIVE_BACKFILL_BASELINE`
+(reservations for all queued jobs), `SJF_BACKFILL`, `LJF_BACKFILL`, `FAIRSHARE_BACKFILL`
+(decayed-usage multifactor priority), `ML_BACKFILL_P50`, `ML_BACKFILL_P10`, and `RL_TRAINED`
+(MaskablePPO agent; requires the `[rl]` extras and a trained checkpoint).
+
 Key options:
 - `--strict-invariants`
 - `--runtime-model-dir`
@@ -202,6 +208,29 @@ Outputs:
 - queue artifact parquet,
 - simulation report,
 - invariant report,
+- manifest.
+
+### What-If Analysis (Operator Mode)
+
+```bash
+hpcopt whatif run --sacct /var/log/slurm/sacct_dump.txt --candidate-policy SJF_BACKFILL
+hpcopt whatif run --trace <dataset.parquet> --slurm-scheduler-type sched/builtin --capacity-cpus 512
+hpcopt whatif run --trace <dataset.parquet> --candidate-policy EASY_BACKFILL_BASELINE --candidate-capacity-cpus 640
+```
+
+Key options:
+- `--sacct` / `--trace` (exactly one; sacct dumps are ingested automatically)
+- `--candidate-policy` or `--slurm-scheduler-type` (`sched/builtin` → `FIFO_STRICT`, `sched/backfill` → `EASY_BACKFILL_BASELINE`)
+- `--baseline-policy` (default `EASY_BACKFILL_BASELINE`)
+- `--capacity-cpus` (inferred from peak observed concurrency when omitted)
+- `--candidate-capacity-cpus` (capacity what-if)
+- `--runtime-model-dir` (required for ML policies)
+
+Outputs:
+- what-if report (JSON + markdown) with verdict (`improvement` / `regression` /
+  `no_material_change` / `blocked_constraints`), fidelity-graded confidence, metric deltas,
+  constraint contract result, and unmodeled-caveat list,
+- baseline fidelity report,
 - manifest.
 
 ### Baseline Replay Bundle

@@ -12,6 +12,7 @@ from hpcopt.cli.pipeline import analysis_app, credibility_app, features_app, pro
 from hpcopt.cli.report import artifacts_app, recommend_app, report_app
 from hpcopt.cli.simulate import simulate_app, stress_app
 from hpcopt.cli.train import train_app
+from hpcopt.cli.whatif import whatif_app
 
 app = typer.Typer(help="HPC Workload Optimizer CLI")
 
@@ -29,6 +30,7 @@ app.add_typer(credibility_app, name="credibility")
 app.add_typer(analysis_app, name="analysis")
 app.add_typer(model_app, name="model")
 app.add_typer(artifacts_app, name="artifacts")
+app.add_typer(whatif_app, name="whatif")
 
 
 def run() -> None:
