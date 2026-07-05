@@ -20,9 +20,10 @@ from hpcopt.simulate.batsim import (
     SUPPORTED_EDC_MODES,
     build_batsim_run_config,
     invoke_batsim_run,
+    normalize_batsim_run_outputs,
 )
 from hpcopt.simulate.core import SUPPORTED_POLICIES, run_simulation_from_trace
-from hpcopt.simulate.fidelity import run_baseline_fidelity_gate
+from hpcopt.simulate.fidelity import run_baseline_fidelity_gate, run_candidate_fidelity_report
 from hpcopt.simulate.objective import evaluate_constraint_contract
 from hpcopt.simulate.stress import generate_stress_scenario
 from hpcopt.utils.io import ensure_dir, write_json
@@ -248,6 +249,39 @@ def simulate_batsim_run_cmd(
         "returncode": result.returncode,
         "command": result.command,
     }
+    if result.status == "ok" and not dry_run and normalize_to_sim_report:
+        normalization = normalize_batsim_run_outputs(
+            config_path=config,
+            report_out_dir=out,
+            simulation_out_dir=simulation_out,
+        )
+        report_payload["normalization"] = {
+            "sim_report": str(normalization.sim_report_path),
+            "jobs_artifact": str(normalization.jobs_artifact_path),
+            "queue_artifact": str(normalization.queue_artifact_path),
+            "invariant_report": str(normalization.invariant_report_path),
+            "metrics": normalization.metrics,
+        }
+        typer.echo(f"Normalized sim report: {normalization.sim_report_path}")
+        if emit_fidelity_report:
+            config_payload = json.loads(config.read_text(encoding="utf-8"))
+            source_trace = config_payload.get("workload", {}).get("source_trace")
+            if source_trace and Path(source_trace).suffix.lower() == ".parquet" and Path(source_trace).exists():
+                fidelity_result = run_candidate_fidelity_report(
+                    trace_df=pd.read_parquet(source_trace),
+                    simulated_jobs=pd.read_parquet(normalization.jobs_artifact_path),
+                    simulated_queue=pd.read_parquet(normalization.queue_artifact_path),
+                    capacity_cpus=int(config_payload.get("resources", {}).get("capacity_cpus", 1)),
+                    out_path=out / f"{config.stem}_batsim_fidelity_report.json",
+                    run_id=normalization.run_id,
+                    policy_id=normalization.policy_id,
+                    config_path=fidelity_config if fidelity_config and fidelity_config.exists() else None,
+                )
+                report_payload["fidelity"] = {
+                    "status": fidelity_result.status,
+                    "report": str(fidelity_result.report_path),
+                }
+                typer.echo(f"Batsim fidelity status: {fidelity_result.status}")
     report_path = out / f"{config.stem}_batsim_run_report.json"
     write_json(report_path, report_payload)
     typer.echo(f"Batsim run status: {result.status}")

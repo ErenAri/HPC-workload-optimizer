@@ -19,9 +19,12 @@ This will:
 
 | Trace | Jobs | FIFO p95_BSLD | EASY p95_BSLD | Improvement |
 |---|---|---|---|---|
-| CTC-SP2 | 77,222 | 195.73 | **3.94** | **+98.0%** |
-| HPC2N | 202,870 | 749.60 | **60.22** | **+92.0%** |
-| SDSC-SP2 | 54,044 | 82,865 | **340.71** | **+99.6%** |
+| CTC-SP2 | 77,222 | 188.05 | **4.91** | **+97.4%** |
+| HPC2N | 202,870 | 286.98 | **33.90** | **+88.2%** |
+| SDSC-SP2 | 54,044 | 56,785 | **275.73** | **+99.5%** |
+
+BSLD follows the metric contract `(wait + runtime) / max(runtime, 60)`; results are
+cross-validated against Batsim (see `docs/validation/batsim-agreement.md`).
 
 !!! note "Total simulation time"
     All 6 runs complete in under 1 second on the Rust engine.

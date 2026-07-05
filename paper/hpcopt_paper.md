@@ -318,22 +318,23 @@ Each evaluation follows a five-step credibility protocol:
 
 | Trace | Policy | p95 BSLD | Util. (%) | Mean Wait (s) | p95 Wait (s) | Makespan (s) | Violations |
 |---|---|---|---|---|---|---|---|
-| CTC-SP2 | FIFO | 195.73 | 55.5 | 6,183 | 34,361 | 29,306,751 | 0 |
-| CTC-SP2 | EASY | **3.94** | 55.5 | 1,883 | 13,045 | 29,306,751 | 0 |
-| HPC2N | FIFO | 749.60 | 59.6 | 16,189 | 68,219 | 109,256,855 | 0 |
-| HPC2N | EASY | **60.22** | 59.6 | 11,193 | 46,908 | 109,256,855 | 0 |
-| SDSC-SP2 | FIFO | 82,864.67 | 76.8 | 1,552,128 | 5,103,933 | 68,440,542 | 0 |
-| SDSC-SP2 | EASY | **340.71** | 83.3 | 22,882 | 125,944 | 63,120,686 | 0 |
+| CTC-SP2 | FIFO | 188.05 | 55.5 | 6,183 | 34,361 | 29,306,751 | 0 |
+| CTC-SP2 | EASY | **4.91** | 55.5 | 1,883 | 13,045 | 29,306,751 | 0 |
+| HPC2N | FIFO | 286.98 | 59.6 | 16,189 | 68,219 | 109,256,855 | 0 |
+| HPC2N | EASY | **33.90** | 59.6 | 11,193 | 46,908 | 109,256,855 | 0 |
+| SDSC-SP2 | FIFO | 56,784.93 | 76.8 | 1,552,128 | 5,103,933 | 68,440,542 | 0 |
+| SDSC-SP2 | EASY | **275.73** | 83.3 | 22,882 | 125,944 | 63,120,686 | 0 |
 
 All runs complete with zero invariant violations, confirming the correctness of the simulation engine's transition contract enforcement.
+BSLD values follow the metric contract `(wait + runtime) / max(runtime, 60)` with linear-interpolation percentiles; FIFO results are cross-validated against Batsim 5.0 (agreement within 0.7–3.5% on all metrics; see `docs/validation/batsim-agreement.md`, which also documents the Rust-engine metric-parity defect this cross-validation uncovered and its fix).
 
 **Table 5: EASY Backfill Improvement over FIFO**
 
 | Trace | p95 BSLD Improvement | Mean Wait Improvement | p95 Wait Improvement | Utilization Change |
 |---|---|---|---|---|
-| CTC-SP2 | −98.0% | −69.5% | −62.0% | 0.0% |
-| HPC2N | −92.0% | −30.8% | −31.2% | 0.0% |
-| SDSC-SP2 | −99.6% | −98.5% | −97.5% | +6.5 pp |
+| CTC-SP2 | −97.4% | −69.5% | −62.0% | 0.0% |
+| HPC2N | −88.2% | −30.8% | −31.2% | 0.0% |
+| SDSC-SP2 | −99.5% | −98.5% | −97.5% | +6.5 pp |
 
 EASY backfilling delivers dramatic improvements across all traces. The most pronounced gains appear on SDSC-SP2, where the extreme runtime tail ratio (181.1×) creates large over-request gaps that backfilling exploits. Note that utilization is unchanged for CTC-SP2 and HPC2N — the improvement manifests entirely as reduced waiting, not additional throughput — while SDSC-SP2 gains 6.5 percentage points of utilization through makespan reduction.
 

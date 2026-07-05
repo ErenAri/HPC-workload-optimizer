@@ -98,26 +98,32 @@ struct SimulationReport {
 
 // ── Utility functions ──────────────────────────────────────────
 
+/// Linear-interpolation percentile, matching numpy.quantile's default method
+/// used by the Python reference engine (metric parity contract).
 fn percentile_f64(sorted: &[f64], p: f64) -> f64 {
     if sorted.is_empty() {
         return 0.0;
     }
-    let idx = ((sorted.len() - 1) as f64 * p).round() as usize;
-    sorted[idx.min(sorted.len() - 1)]
+    let pos = (sorted.len() - 1) as f64 * p;
+    let lower = pos.floor() as usize;
+    let upper = (pos.ceil() as usize).min(sorted.len() - 1);
+    let frac = pos - lower as f64;
+    sorted[lower] + (sorted[upper] - sorted[lower]) * frac
 }
 
 fn percentile_i64(sorted: &[i64], p: f64) -> f64 {
     if sorted.is_empty() {
         return 0.0;
     }
-    let idx = ((sorted.len() - 1) as f64 * p).round() as usize;
-    sorted[idx.min(sorted.len() - 1)] as f64
+    let as_f64: Vec<f64> = sorted.iter().map(|v| *v as f64).collect();
+    percentile_f64(&as_f64, p)
 }
 
-/// Bounded slowdown: max(1, wait / max(runtime, 10)).
+/// Bounded slowdown: (wait + runtime) / max(runtime, 60), matching the Python
+/// reference engine (python/hpcopt/simulate/metrics.py).
 fn bsld(wait_sec: i64, runtime_sec: i64) -> f64 {
-    let thresh = runtime_sec.max(10);
-    (wait_sec as f64 / thresh as f64).max(1.0)
+    let thresh = runtime_sec.max(60);
+    (wait_sec as f64 + runtime_sec as f64) / thresh as f64
 }
 
 fn check_invariants(
@@ -443,4 +449,35 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Metric parity contract with python/hpcopt/simulate/metrics.py — these
+    // formulas MUST stay identical across engines (see
+    // docs/validation/batsim-agreement.md for the defect this guards against).
+
+    #[test]
+    fn bsld_matches_python_metric_contract() {
+        // (wait + runtime) / max(runtime, 60)
+        assert_eq!(bsld(0, 120), 1.0);
+        assert_eq!(bsld(120, 120), 2.0);
+        // Short jobs are floored at 60s in the denominator only.
+        assert_eq!(bsld(570, 30), 10.0);
+        // Zero-wait short job can be below 1.0 (no clamping, matching Python).
+        assert_eq!(bsld(0, 30), 0.5);
+    }
+
+    #[test]
+    fn percentile_uses_linear_interpolation_like_numpy() {
+        let values = vec![1.0, 2.0, 3.0, 4.0];
+        // numpy.quantile([1,2,3,4], 0.95) == 3.85
+        assert!((percentile_f64(&values, 0.95) - 3.85).abs() < 1e-9);
+        assert_eq!(percentile_f64(&values, 0.0), 1.0);
+        assert_eq!(percentile_f64(&values, 1.0), 4.0);
+        assert_eq!(percentile_f64(&[], 0.95), 0.0);
+        assert!((percentile_i64(&[10, 20], 0.5) - 15.0).abs() < 1e-9);
+    }
 }
