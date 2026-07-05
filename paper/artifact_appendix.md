@@ -20,7 +20,7 @@ We target three ACM badges:
 
 ## A. Artifact Identification
 
-- **Repository:** https://github.com/ErenAri/HCP-workload-optimizer
+- **Repository:** https://github.com/ErenAri/HPC-workload-optimizer
 - **Pinned release:** `v2.1.0` (see `CITATION.cff` and Zenodo DOI).
 - **License:** Apache-2.0 (see `LICENSE`).
 - **Languages:** Python (≥3.11) and Rust (stable, optional accelerator).
@@ -63,8 +63,8 @@ Place the gzip-compressed SWF files under `data/raw/`. Hashes are pinned in
 ### D.1 From a fresh clone (Linux/macOS/WSL)
 
 ```bash
-git clone https://github.com/ErenAri/HCP-workload-optimizer.git
-cd HCP-workload-optimizer
+git clone https://github.com/ErenAri/HPC-workload-optimizer.git
+cd HPC-workload-optimizer
 python -m venv .venv && source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
@@ -173,4 +173,4 @@ the OS / Python fingerprint. Schemas live under `schemas/`.
 ## K. Contact
 
 - Author: Eren Ari (`erenari27@gmail.com`)
-- Issue tracker: https://github.com/ErenAri/HCP-workload-optimizer/issues
+- Issue tracker: https://github.com/ErenAri/HPC-workload-optimizer/issues

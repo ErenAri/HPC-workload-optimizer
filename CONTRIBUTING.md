@@ -5,7 +5,7 @@
 ```bash
 # Clone and install
 git clone <repo-url>
-cd HCP-workload-optimizer
+cd HPC-workload-optimizer
 pip install -e ".[dev]"
 
 # Install pre-commit hooks

@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`hpcopt whatif` command group** (operator mode): evaluate a scheduler policy or capacity
+  change directly from a raw `sacct --parsable2` dump (or canonical parquet) in seconds. Baseline
+  replay is graded by the fidelity gate and every verdict carries that confidence; KPI deltas that
+  violate fairness/starvation constraints are reported as `blocked_constraints`, not wins. New
+  package `python/hpcopt/whatif/`, CLI `python/hpcopt/cli/whatif.py`, demo
+  `examples/whatif_demo.py`, tests `tests/unit/test_whatif.py`.
+- **Batsim cross-validation study** (`docs/validation/batsim-agreement.md`): FIFO replay of all
+  three reference traces agrees across Batsim 5.0, the Rust engine, and the Python reference
+  engine within 0.7–3.5% on every metric (post-fix; see below).
+- **`scripts/policy_matrix.py`**: full policy × trace benchmark matrix on the Python reference
+  engine, with incremental JSON/markdown persistence.
+- `ROADMAP.md`: competitive positioning and phased execution plan.
+- `docs/production-evidence.md`: operational evidence relocated from the README.
+
+### Fixed
+- **Rust engine BSLD metric-parity defect** (found by the Batsim cross-validation): the Rust
+  `bsld()` computed `max(1, wait / max(runtime, 10))` instead of the metric contract
+  `(wait + runtime) / max(runtime, 60)`, inflating tail BSLD ~6× for short jobs (SDSC-SP2 FIFO
+  p95 BSLD reported 82,865 vs. true 56,785). Percentiles now use linear interpolation matching
+  `numpy.quantile`. All published benchmark tables regenerated.
+- `hpcopt simulate batsim-run` now actually performs output normalization and emits the candidate
+  fidelity report (the `--normalize-to-sim-report` / `--emit-fidelity-report` options were
+  previously accepted but ignored).
+- `docs/07-interfaces-cli-and-api.md` now lists all ten supported policies (docs-consistency gate
+  was failing).
+
+### Changed
+- README repositioned around the evaluation-harness claim: full policy matrix table, tool
+  comparison section (Batsim / Slurm Simulator / RLScheduler), operational evidence demoted to
+  `docs/production-evidence.md`; removed the placeholder Zenodo DOI badge.
+- GitHub repository renamed `HCP-workload-optimizer` → `HPC-workload-optimizer` (old URLs
+  redirect); all in-repo references updated.
+
 ## [2.3.0] - 2026-04-16
 
 ### Added
@@ -99,10 +135,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reinforcement learning policy search
 - Slurm live adapter
 
-[2.3.0]: https://github.com/ErenAri/HCP-workload-optimizer/compare/v2.2.0...v2.3.0
-[2.2.0]: https://github.com/ErenAri/HCP-workload-optimizer/compare/v2.1.0...v2.2.0
-[2.1.0]: https://github.com/ErenAri/HCP-workload-optimizer/compare/v2.0.0...v2.1.0
-[2.0.0]: https://github.com/ErenAri/HCP-workload-optimizer/compare/v1.2.0...v2.0.0
-[1.2.0]: https://github.com/ErenAri/HCP-workload-optimizer/compare/v1.0.0...v1.2.0
-[1.0.0]: https://github.com/ErenAri/HCP-workload-optimizer/releases/tag/v1.0.0
-[Unreleased]: https://github.com/ErenAri/HCP-workload-optimizer/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/ErenAri/HPC-workload-optimizer/compare/v2.2.0...v2.3.0
+[2.2.0]: https://github.com/ErenAri/HPC-workload-optimizer/compare/v2.1.0...v2.2.0
+[2.1.0]: https://github.com/ErenAri/HPC-workload-optimizer/compare/v2.0.0...v2.1.0
+[2.0.0]: https://github.com/ErenAri/HPC-workload-optimizer/compare/v1.2.0...v2.0.0
+[1.2.0]: https://github.com/ErenAri/HPC-workload-optimizer/compare/v1.0.0...v1.2.0
+[1.0.0]: https://github.com/ErenAri/HPC-workload-optimizer/releases/tag/v1.0.0
+[Unreleased]: https://github.com/ErenAri/HPC-workload-optimizer/compare/v2.3.0...HEAD

@@ -28,8 +28,8 @@ pip install hpc-workload-optimizer[dev]
 ## From Source
 
 ```bash
-git clone https://github.com/ErenAri/HCP-workload-optimizer.git
-cd HCP-workload-optimizer
+git clone https://github.com/ErenAri/HPC-workload-optimizer.git
+cd HPC-workload-optimizer
 pip install -e ".[dev,lightgbm]"
 ```
 

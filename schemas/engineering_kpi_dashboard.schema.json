@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/ErenAri/HCP-workload-optimizer/schemas/engineering_kpi_dashboard.schema.json",
+  "$id": "https://github.com/ErenAri/HPC-workload-optimizer/schemas/engineering_kpi_dashboard.schema.json",
   "title": "Engineering KPI Dashboard",
   "type": "object",
   "additionalProperties": false,

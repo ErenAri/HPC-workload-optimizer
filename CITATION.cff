@@ -16,8 +16,8 @@ authors:
   - family-names: Ari
     given-names: Eren
     email: erenari27@gmail.com
-repository-code: "https://github.com/ErenAri/HCP-workload-optimizer"
-url: "https://github.com/ErenAri/HCP-workload-optimizer"
+repository-code: "https://github.com/ErenAri/HPC-workload-optimizer"
+url: "https://github.com/ErenAri/HPC-workload-optimizer"
 license: Apache-2.0
 version: 2.1.0
 date-released: 2026-04-16
@@ -43,7 +43,7 @@ preferred-citation:
       email: erenari27@gmail.com
   version: 2.1.0
   year: 2026
-  url: "https://github.com/ErenAri/HCP-workload-optimizer"
+  url: "https://github.com/ErenAri/HPC-workload-optimizer"
 references:
   - type: article
     title: "Backfilling Using System-Generated Predictions Rather Than User Runtime Estimates"

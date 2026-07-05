@@ -37,11 +37,11 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/ErenAri/HCP-workload-optimizer"
-Repository = "https://github.com/ErenAri/HCP-workload-optimizer"
-Documentation = "https://github.com/ErenAri/HCP-workload-optimizer#readme"
-Issues = "https://github.com/ErenAri/HCP-workload-optimizer/issues"
-Changelog = "https://github.com/ErenAri/HCP-workload-optimizer/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/ErenAri/HPC-workload-optimizer"
+Repository = "https://github.com/ErenAri/HPC-workload-optimizer"
+Documentation = "https://github.com/ErenAri/HPC-workload-optimizer#readme"
+Issues = "https://github.com/ErenAri/HPC-workload-optimizer/issues"
+Changelog = "https://github.com/ErenAri/HPC-workload-optimizer/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [

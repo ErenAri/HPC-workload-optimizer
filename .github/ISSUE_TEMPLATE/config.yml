@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
   - name: Engineering Maturity Program Guide
-    url: https://github.com/ErenAri/HCP-workload-optimizer/blob/main/program/engineering-maturity/README.md
+    url: https://github.com/ErenAri/HPC-workload-optimizer/blob/main/program/engineering-maturity/README.md
     about: Review program scope, milestones, and KPI reporting requirements.

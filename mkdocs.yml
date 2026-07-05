@@ -1,8 +1,8 @@
 site_name: HPC Workload Optimizer
 site_description: Systems-first HPC scheduling research platform — Python + Rust
-site_url: https://erenari.github.io/HCP-workload-optimizer/
-repo_url: https://github.com/ErenAri/HCP-workload-optimizer
-repo_name: ErenAri/HCP-workload-optimizer
+site_url: https://erenari.github.io/HPC-workload-optimizer/
+repo_url: https://github.com/ErenAri/HPC-workload-optimizer
+repo_name: ErenAri/HPC-workload-optimizer
 edit_uri: edit/main/docs/
 
 theme:
@@ -61,9 +61,12 @@ nav:
     - LightGBM Training: tutorials/lightgbm-training.md
     - RL Policy Search: tutorials/rl-policy-search.md
     - Live Integration: tutorials/live-integration.md
+  - Validation:
+    - Batsim Cross-Validation: validation/batsim-agreement.md
   - Operations:
     - Deployment Guide: tutorials/deployment.md
     - Production Readiness: production-readiness-checklist.md
+    - Production Evidence: production-evidence.md
     - API Reference: api/reference.md
   - Benchmark Results: dashboard.md
   - Paper Outline: paper_outline.md
@@ -98,5 +101,5 @@ plugins:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/ErenAri/HCP-workload-optimizer
+      link: https://github.com/ErenAri/HPC-workload-optimizer
   generator: false

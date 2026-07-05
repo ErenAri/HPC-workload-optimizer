@@ -30,7 +30,7 @@
   ],
   "related_identifiers": [
     {
-      "identifier": "https://github.com/ErenAri/HCP-workload-optimizer",
+      "identifier": "https://github.com/ErenAri/HPC-workload-optimizer",
       "relation": "isSupplementTo",
       "scheme": "url"
     }

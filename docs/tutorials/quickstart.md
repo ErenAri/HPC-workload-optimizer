@@ -11,8 +11,8 @@ Get from zero to benchmark results in under 5 minutes.
 
 ```bash
 # Clone the repository
-git clone https://github.com/ErenAri/HCP-workload-optimizer.git
-cd HCP-workload-optimizer
+git clone https://github.com/ErenAri/HPC-workload-optimizer.git
+cd HPC-workload-optimizer
 
 # Install with pip (editable mode)
 pip install -e ".[dev]"
