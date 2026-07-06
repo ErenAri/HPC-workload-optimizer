@@ -26,6 +26,17 @@ struct Args {
     #[arg(long, default_value_t = 64)]
     capacity_cpus: u32,
 
+    /// Total GPU capacity. 0 (default) disables the GPU dimension:
+    /// job GPU requests are ignored and scheduling is identical to the
+    /// CPU-only engine.
+    #[arg(long, default_value_t = 0)]
+    capacity_gpus: u32,
+
+    /// Total memory capacity (same unit as the trace's requested_mem,
+    /// canonically KB from SWF). 0 (default) disables the dimension.
+    #[arg(long, default_value_t = 0)]
+    capacity_mem: u64,
+
     /// Fail immediately on invariant violations.
     #[arg(long, default_value_t = false)]
     strict_invariants: bool,
@@ -35,14 +46,64 @@ struct Args {
     output: Option<PathBuf>,
 }
 
+// ── Resource vector ────────────────────────────────────────────
+//
+// One allocatable resource bundle. A dimension with capacity 0 is "not
+// modeled": job requests in that dimension are normalized to 0 at load
+// time, so every fit/conservation check degenerates to the historical
+// CPU-only behavior (bit-for-bit — the published benchmarks depend on it).
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Resources {
+    cpus: u32,
+    gpus: u32,
+    mem: u64,
+}
+
+impl Resources {
+    const ZERO: Resources = Resources { cpus: 0, gpus: 0, mem: 0 };
+
+    fn fits_in(&self, free: &Resources) -> bool {
+        self.cpus <= free.cpus && self.gpus <= free.gpus && self.mem <= free.mem
+    }
+
+    fn add(&mut self, other: &Resources) {
+        self.cpus = self.cpus.saturating_add(other.cpus);
+        self.gpus = self.gpus.saturating_add(other.gpus);
+        self.mem = self.mem.saturating_add(other.mem);
+    }
+
+    fn sub(&mut self, other: &Resources) {
+        self.cpus -= other.cpus;
+        self.gpus -= other.gpus;
+        self.mem -= other.mem;
+    }
+
+    fn exceeds(&self, capacity: &Resources) -> bool {
+        self.cpus > capacity.cpus || self.gpus > capacity.gpus || self.mem > capacity.mem
+    }
+}
+
 // ── Data structures ────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize)]
-struct Job {
+struct JobRecord {
     job_id: u64,
     submit_ts: i64,
     runtime_actual_sec: i64,
     requested_cpus: u32,
+    #[serde(default)]
+    requested_gpus: u32,
+    #[serde(default)]
+    requested_mem: u64,
+}
+
+#[derive(Debug, Clone)]
+struct Job {
+    job_id: u64,
+    submit_ts: i64,
+    runtime_actual_sec: i64,
+    requested: Resources,
 }
 
 #[derive(Debug, Clone)]
@@ -51,7 +112,7 @@ struct RunningJob {
     submit_ts: i64,
     start_ts: i64,
     end_ts: i64,
-    requested_cpus: u32,
+    requested: Resources,
 }
 
 #[derive(Debug, Clone)]
@@ -61,7 +122,7 @@ struct CompletedJob {
     submit_ts: i64,
     start_ts: i64,
     end_ts: i64,
-    requested_cpus: u32,
+    requested: Resources,
     wait_sec: i64,
 }
 
@@ -71,12 +132,18 @@ struct CompletedJob {
 struct Metrics {
     policy_id: String,
     capacity_cpus: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    capacity_gpus: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    capacity_mem: Option<u64>,
     jobs_total: usize,
     jobs_completed: usize,
     mean_wait_sec: f64,
     p95_wait_sec: f64,
     p95_bsld: f64,
     utilization_mean: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    utilization_gpu_mean: Option<f64>,
     makespan_sec: i64,
     invariant_violations: usize,
 }
@@ -128,18 +195,23 @@ fn bsld(wait_sec: i64, runtime_sec: i64) -> f64 {
 
 fn check_invariants(
     clock_ts: i64,
-    capacity: u32,
-    free_cpus: u32,
+    capacity: &Resources,
+    free: &Resources,
     running: &[RunningJob],
     queued: &VecDeque<Job>,
 ) -> Vec<String> {
     let mut violations = Vec::new();
-    if free_cpus > capacity {
-        violations.push("free_cpus_exceeds_capacity".to_string());
+    if free.exceeds(capacity) {
+        violations.push("free_resources_exceed_capacity".to_string());
     }
-    let running_cpus: u32 = running.iter().map(|j| j.requested_cpus).sum();
-    if running_cpus.saturating_add(free_cpus) != capacity {
-        violations.push("cpu_conservation_broken".to_string());
+    let mut allocated = Resources::ZERO;
+    for j in running {
+        allocated.add(&j.requested);
+    }
+    let mut total = allocated;
+    total.add(free);
+    if total != *capacity {
+        violations.push("resource_conservation_broken".to_string());
     }
     for job in running {
         if job.start_ts < job.submit_ts {
@@ -154,26 +226,35 @@ fn check_invariants(
     violations
 }
 
+fn start_job(job: Job, clock_ts: i64, free: &mut Resources) -> RunningJob {
+    let runtime = job.runtime_actual_sec.max(0);
+    free.sub(&job.requested);
+    RunningJob {
+        job_id: job.job_id,
+        submit_ts: job.submit_ts,
+        start_ts: clock_ts,
+        end_ts: clock_ts.saturating_add(runtime),
+        requested: job.requested,
+    }
+}
+
 // ── FIFO dispatch ──────────────────────────────────────────────
 
-fn dispatch_fifo(queued: &mut VecDeque<Job>, free_cpus: &mut u32, clock_ts: i64) -> Vec<RunningJob> {
+fn dispatch_fifo(
+    queued: &mut VecDeque<Job>,
+    free: &mut Resources,
+    clock_ts: i64,
+) -> Vec<RunningJob> {
     let mut started = Vec::new();
     loop {
-        let can_dispatch = queued.front().is_some_and(|h| h.requested_cpus > 0 && h.requested_cpus <= *free_cpus);
+        let can_dispatch = queued
+            .front()
+            .is_some_and(|h| h.requested.cpus > 0 && h.requested.fits_in(free));
         if !can_dispatch {
             break;
         }
         let job = queued.pop_front().unwrap();
-        let runtime = job.runtime_actual_sec.max(0);
-        let end_ts = clock_ts.saturating_add(runtime);
-        *free_cpus -= job.requested_cpus;
-        started.push(RunningJob {
-            job_id: job.job_id,
-            submit_ts: job.submit_ts,
-            start_ts: clock_ts,
-            end_ts,
-            requested_cpus: job.requested_cpus,
-        });
+        started.push(start_job(job, clock_ts, free));
     }
     started
 }
@@ -182,58 +263,53 @@ fn dispatch_fifo(queued: &mut VecDeque<Job>, free_cpus: &mut u32, clock_ts: i64)
 //
 // 1. Try to dispatch the head-of-queue (same as FIFO).
 // 2. If head is blocked, compute its "shadow time" = earliest time
-//    enough CPUs will free up to run it.
+//    enough resources will free up to run it.
 // 3. Backfill: scan remaining queued jobs; start any that fit in
-//    the current free CPUs AND finish before the shadow time.
+//    the current free resources AND finish before the shadow time.
 
 fn dispatch_easy_backfill(
     queued: &mut VecDeque<Job>,
     running: &[RunningJob],
-    free_cpus: &mut u32,
+    free: &mut Resources,
     clock_ts: i64,
 ) -> Vec<RunningJob> {
     let mut started = Vec::new();
 
     // Step 1: Try head-of-queue dispatch (greedy, like FIFO)
     loop {
-        let can = queued.front().is_some_and(|h| h.requested_cpus > 0 && h.requested_cpus <= *free_cpus);
+        let can = queued
+            .front()
+            .is_some_and(|h| h.requested.cpus > 0 && h.requested.fits_in(free));
         if !can {
             break;
         }
         let job = queued.pop_front().unwrap();
-        let runtime = job.runtime_actual_sec.max(0);
-        let end_ts = clock_ts.saturating_add(runtime);
-        *free_cpus -= job.requested_cpus;
-        started.push(RunningJob {
-            job_id: job.job_id,
-            submit_ts: job.submit_ts,
-            start_ts: clock_ts,
-            end_ts,
-            requested_cpus: job.requested_cpus,
-        });
+        started.push(start_job(job, clock_ts, free));
     }
 
     // If queue is empty or head can already run, no backfill needed.
     let head = match queued.front() {
-        Some(h) if h.requested_cpus > *free_cpus => h,
+        Some(h) if !h.requested.fits_in(free) => h,
         _ => return started,
     };
 
     // Step 2: Compute shadow time for the head-of-queue job.
-    // Sort running jobs by end_ts ascending; accumulate freed CPUs until head fits.
-    let head_cpus = head.requested_cpus;
-    let mut ends: Vec<(i64, u32)> = running.iter().map(|j| (j.end_ts, j.requested_cpus)).collect();
+    // Sort running jobs by end_ts ascending; accumulate freed resources
+    // (in every dimension) until head fits.
+    let head_req = head.requested;
+    let mut ends: Vec<(i64, Resources)> =
+        running.iter().map(|j| (j.end_ts, j.requested)).collect();
     // Also include jobs we just started
     for s in &started {
-        ends.push((s.end_ts, s.requested_cpus));
+        ends.push((s.end_ts, s.requested));
     }
     ends.sort_by_key(|&(t, _)| t);
 
-    let mut cumulative_free = *free_cpus;
+    let mut cumulative_free = *free;
     let mut shadow_time = i64::MAX;
-    for (end_ts, cpus) in &ends {
-        cumulative_free += cpus;
-        if cumulative_free >= head_cpus {
+    for (end_ts, res) in &ends {
+        cumulative_free.add(res);
+        if head_req.fits_in(&cumulative_free) {
             shadow_time = *end_ts;
             break;
         }
@@ -242,30 +318,27 @@ fn dispatch_easy_backfill(
     // Step 3: Backfill — scan queue (skip head) for jobs that fit and complete before shadow time.
     let mut backfill_indices = Vec::new();
     for (i, job) in queued.iter().enumerate().skip(1) {
-        if job.requested_cpus > 0
-            && job.requested_cpus <= *free_cpus
+        if job.requested.cpus > 0
+            && job.requested.fits_in(free)
             && clock_ts.saturating_add(job.runtime_actual_sec.max(0)) <= shadow_time
         {
             backfill_indices.push(i);
-            *free_cpus -= job.requested_cpus;
+            free.sub(&job.requested);
         }
-        if *free_cpus == 0 {
+        if free.cpus == 0 {
             break;
         }
+    }
+
+    // Restore reserved resources; start_job re-subtracts them below.
+    for &idx in &backfill_indices {
+        free.add(&queued[idx].requested);
     }
 
     // Remove backfilled jobs from queue (reverse order to preserve indices).
     for &idx in backfill_indices.iter().rev() {
         let job = queued.remove(idx).unwrap();
-        let runtime = job.runtime_actual_sec.max(0);
-        let end_ts = clock_ts.saturating_add(runtime);
-        started.push(RunningJob {
-            job_id: job.job_id,
-            submit_ts: job.submit_ts,
-            start_ts: clock_ts,
-            end_ts,
-            requested_cpus: job.requested_cpus,
-        });
+        started.push(start_job(job, clock_ts, free));
     }
 
     started
@@ -274,22 +347,38 @@ fn dispatch_easy_backfill(
 // ── Main simulation loop ───────────────────────────────────────
 
 fn simulate(
-    mut jobs: Vec<Job>,
+    records: Vec<JobRecord>,
     policy: &str,
-    capacity_cpus: u32,
+    capacity: Resources,
     strict_invariants: bool,
 ) -> Result<SimulationReport> {
+    // Normalize: a dimension with capacity 0 is not modeled — zero the
+    // request so all fit/conservation checks degrade to CPU-only behavior.
+    let mut jobs: Vec<Job> = records
+        .into_iter()
+        .map(|r| Job {
+            job_id: r.job_id,
+            submit_ts: r.submit_ts,
+            runtime_actual_sec: r.runtime_actual_sec,
+            requested: Resources {
+                cpus: r.requested_cpus,
+                gpus: if capacity.gpus == 0 { 0 } else { r.requested_gpus },
+                mem: if capacity.mem == 0 { 0 } else { r.requested_mem },
+            },
+        })
+        .collect();
     jobs.sort_by(|a, b| a.submit_ts.cmp(&b.submit_ts).then_with(|| a.job_id.cmp(&b.job_id)));
 
     let total_jobs = jobs.len();
     let mut submit_idx: usize = 0;
     let mut queued: VecDeque<Job> = VecDeque::new();
     let mut running: Vec<RunningJob> = Vec::new();
-    let mut free_cpus = capacity_cpus;
+    let mut free = capacity;
     let mut clock_ts = jobs.first().map(|j| j.submit_ts).unwrap_or(0);
     let min_submit_ts = clock_ts;
     let mut max_end_ts = min_submit_ts;
     let mut total_cpu_seconds: i128 = 0;
+    let mut total_gpu_seconds: i128 = 0;
     let mut completed: Vec<CompletedJob> = Vec::with_capacity(total_jobs);
     let mut all_violations: Vec<String> = Vec::new();
 
@@ -307,17 +396,18 @@ fn simulate(
         while i < running.len() {
             if running[i].end_ts == clock_ts {
                 let rj = running.swap_remove(i);
-                free_cpus += rj.requested_cpus;
+                free.add(&rj.requested);
                 let wait = rj.start_ts.saturating_sub(rj.submit_ts).max(0);
                 let runtime = rj.end_ts.saturating_sub(rj.start_ts).max(0);
-                total_cpu_seconds += i128::from(rj.requested_cpus) * i128::from(runtime);
+                total_cpu_seconds += i128::from(rj.requested.cpus) * i128::from(runtime);
+                total_gpu_seconds += i128::from(rj.requested.gpus) * i128::from(runtime);
                 max_end_ts = max_end_ts.max(rj.end_ts);
                 completed.push(CompletedJob {
                     job_id: rj.job_id,
                     submit_ts: rj.submit_ts,
                     start_ts: rj.start_ts,
                     end_ts: rj.end_ts,
-                    requested_cpus: rj.requested_cpus,
+                    requested: rj.requested,
                     wait_sec: wait,
                 });
             } else {
@@ -336,13 +426,15 @@ fn simulate(
 
         // Policy dispatch.
         let newly_started = match policy {
-            "EASY_BACKFILL_BASELINE" => dispatch_easy_backfill(&mut queued, &running, &mut free_cpus, clock_ts),
-            _ => dispatch_fifo(&mut queued, &mut free_cpus, clock_ts),
+            "EASY_BACKFILL_BASELINE" => {
+                dispatch_easy_backfill(&mut queued, &running, &mut free, clock_ts)
+            }
+            _ => dispatch_fifo(&mut queued, &mut free, clock_ts),
         };
         running.extend(newly_started);
 
         // Invariant check.
-        let violations = check_invariants(clock_ts, capacity_cpus, free_cpus, &running, &queued);
+        let violations = check_invariants(clock_ts, &capacity, &free, &running, &queued);
         if !violations.is_empty() {
             all_violations.extend(violations.iter().cloned());
             if strict_invariants {
@@ -370,10 +462,16 @@ fn simulate(
 
     let makespan = max_end_ts.saturating_sub(min_submit_ts).max(0);
     let utilization_mean = if makespan > 0 {
-        let denom = capacity_cpus as f64 * makespan as f64;
+        let denom = capacity.cpus as f64 * makespan as f64;
         (total_cpu_seconds as f64 / denom).clamp(0.0, 1.0)
     } else {
         0.0
+    };
+    let utilization_gpu_mean = if capacity.gpus > 0 && makespan > 0 {
+        let denom = capacity.gpus as f64 * makespan as f64;
+        Some((total_gpu_seconds as f64 / denom).clamp(0.0, 1.0))
+    } else {
+        None
     };
 
     let violation_examples: Vec<String> = all_violations.iter().take(20).cloned().collect();
@@ -383,13 +481,16 @@ fn simulate(
         run_id: format!("rust_sim_{}", policy.to_ascii_lowercase()),
         metrics: Metrics {
             policy_id: policy.to_string(),
-            capacity_cpus,
+            capacity_cpus: capacity.cpus,
+            capacity_gpus: (capacity.gpus > 0).then_some(capacity.gpus),
+            capacity_mem: (capacity.mem > 0).then_some(capacity.mem),
             jobs_total: total_jobs,
             jobs_completed: completed.len(),
             mean_wait_sec: mean_wait,
             p95_wait_sec: p95_wait,
             p95_bsld,
             utilization_mean,
+            utilization_gpu_mean,
             makespan_sec: makespan,
             invariant_violations: all_violations.len(),
         },
@@ -421,17 +522,25 @@ fn main() -> Result<()> {
 
     let input_raw = fs::read_to_string(&args.input)
         .with_context(|| format!("failed to read {}", args.input.display()))?;
-    let jobs: Vec<Job> = serde_json::from_str(&input_raw)
+    let jobs: Vec<JobRecord> = serde_json::from_str(&input_raw)
         .with_context(|| "failed to parse input JSON array of jobs")?;
 
+    let capacity = Resources {
+        cpus: args.capacity_cpus,
+        gpus: args.capacity_gpus,
+        mem: args.capacity_mem,
+    };
+
     eprintln!(
-        "sim-runner: {} jobs, policy={}, capacity={}",
+        "sim-runner: {} jobs, policy={}, capacity=cpus:{} gpus:{} mem:{}",
         jobs.len(),
         args.policy,
-        args.capacity_cpus
+        capacity.cpus,
+        capacity.gpus,
+        capacity.mem
     );
 
-    let report = simulate(jobs, &args.policy, args.capacity_cpus, args.strict_invariants)?;
+    let report = simulate(jobs, &args.policy, capacity, args.strict_invariants)?;
 
     eprintln!(
         "sim-runner: done. p95_bsld={:.3}, util={:.3}, makespan={}s",
@@ -479,5 +588,120 @@ mod tests {
         assert_eq!(percentile_f64(&values, 1.0), 4.0);
         assert_eq!(percentile_f64(&[], 0.95), 0.0);
         assert!((percentile_i64(&[10, 20], 0.5) - 15.0).abs() < 1e-9);
+    }
+
+    // ── Multi-resource tests ───────────────────────────────────
+
+    fn rec(job_id: u64, submit_ts: i64, runtime: i64, cpus: u32, gpus: u32, mem: u64) -> JobRecord {
+        JobRecord {
+            job_id,
+            submit_ts,
+            runtime_actual_sec: runtime,
+            requested_cpus: cpus,
+            requested_gpus: gpus,
+            requested_mem: mem,
+        }
+    }
+
+    fn cap(cpus: u32, gpus: u32, mem: u64) -> Resources {
+        Resources { cpus, gpus, mem }
+    }
+
+    #[test]
+    fn resources_fit_requires_every_dimension() {
+        let free = cap(8, 2, 1000);
+        assert!(cap(8, 2, 1000).fits_in(&free));
+        assert!(!cap(9, 0, 0).fits_in(&free));
+        assert!(!cap(1, 3, 0).fits_in(&free));
+        assert!(!cap(1, 0, 1001).fits_in(&free));
+        assert!(Resources::ZERO.fits_in(&free));
+    }
+
+    #[test]
+    fn scalar_mode_ignores_gpu_and_mem_requests() {
+        // capacity_gpus == 0 → GPU requests must not affect scheduling.
+        let jobs_with_gpus = vec![rec(1, 0, 100, 4, 999, 0), rec(2, 0, 100, 4, 999, 0)];
+        let jobs_plain = vec![rec(1, 0, 100, 4, 0, 0), rec(2, 0, 100, 4, 0, 0)];
+        let a = simulate(jobs_with_gpus, "FIFO_STRICT", cap(8, 0, 0), true).unwrap();
+        let b = simulate(jobs_plain, "FIFO_STRICT", cap(8, 0, 0), true).unwrap();
+        assert_eq!(a.metrics.mean_wait_sec, b.metrics.mean_wait_sec);
+        assert_eq!(a.metrics.makespan_sec, b.metrics.makespan_sec);
+        assert_eq!(a.metrics.p95_bsld, b.metrics.p95_bsld);
+        // Both jobs run concurrently: zero wait.
+        assert_eq!(a.metrics.mean_wait_sec, 0.0);
+        assert!(a.metrics.capacity_gpus.is_none());
+        assert!(a.metrics.utilization_gpu_mean.is_none());
+    }
+
+    #[test]
+    fn gpu_scarcity_serializes_jobs_with_free_cpus() {
+        // Plenty of CPUs, one GPU: two 1-GPU jobs must run back to back.
+        let jobs = vec![rec(1, 0, 100, 1, 1, 0), rec(2, 0, 100, 1, 1, 0)];
+        let report = simulate(jobs, "FIFO_STRICT", cap(64, 1, 0), true).unwrap();
+        assert_eq!(report.metrics.jobs_completed, 2);
+        // Second job waits the full 100s runtime of the first.
+        assert_eq!(report.metrics.mean_wait_sec, 50.0);
+        assert_eq!(report.metrics.makespan_sec, 200);
+        assert_eq!(report.metrics.utilization_gpu_mean, Some(1.0));
+        assert_eq!(report.invariant_report.total_violations, 0);
+    }
+
+    #[test]
+    fn mem_scarcity_serializes_jobs_with_free_cpus() {
+        let jobs = vec![rec(1, 0, 100, 1, 0, 800), rec(2, 0, 100, 1, 0, 800)];
+        let report = simulate(jobs, "FIFO_STRICT", cap(64, 0, 1000), true).unwrap();
+        assert_eq!(report.metrics.mean_wait_sec, 50.0);
+        assert_eq!(report.metrics.makespan_sec, 200);
+        assert_eq!(report.metrics.capacity_mem, Some(1000));
+        assert_eq!(report.invariant_report.total_violations, 0);
+    }
+
+    #[test]
+    fn easy_backfill_respects_gpu_shadow_time() {
+        // t=0: job1 takes both GPUs for 100s.
+        // job2 (head, blocked) needs 2 GPUs → shadow time = 100.
+        // job3 needs 1 CPU, 0 GPUs, runs 50s ≤ shadow → backfills at t=0.
+        // job4 needs 1 GPU and would finish at 150 > shadow → must NOT backfill
+        //   (GPUs are free? no — job1 holds both, so it can't start anyway).
+        // job5 needs 1 CPU, 0 GPUs, runs 200s > shadow → must NOT backfill.
+        let jobs = vec![
+            rec(1, 0, 100, 2, 2, 0),
+            rec(2, 1, 100, 2, 2, 0),
+            rec(3, 1, 50, 1, 0, 0),
+            rec(5, 1, 200, 1, 0, 0),
+        ];
+        let report = simulate(jobs, "EASY_BACKFILL_BASELINE", cap(8, 2, 0), true).unwrap();
+        assert_eq!(report.metrics.jobs_completed, 4);
+        assert_eq!(report.invariant_report.total_violations, 0);
+        // job3 backfilled at t=1 (0 wait); job2 starts at t=100 (99 wait);
+        // job5 starts when job2 finishes? No — job5 only needs CPUs, it can
+        // start at t=100 alongside job2 (8 cpus ≥ 2+1). Waits: j1=0, j2=99,
+        // j3=0, j5=99 → mean = 49.5.
+        assert_eq!(report.metrics.mean_wait_sec, 49.5);
+    }
+
+    #[test]
+    fn easy_backfill_gpu_job_cannot_backfill_past_gpu_reservation() {
+        // GPUs: 2 total. job1 holds 1 GPU until t=100. Head job2 needs 2 GPUs
+        // → shadow = 100 with exactly the freed GPU + the 1 free GPU reserved.
+        // job3 (1 GPU, 30s) fits in current free (1 GPU) and ends ≤ shadow →
+        // legitimately backfills (EASY only protects the head's start time).
+        let jobs = vec![
+            rec(1, 0, 100, 1, 1, 0),
+            rec(2, 1, 100, 1, 2, 0),
+            rec(3, 1, 30, 1, 1, 0),
+        ];
+        let report = simulate(jobs, "EASY_BACKFILL_BASELINE", cap(8, 2, 0), true).unwrap();
+        assert_eq!(report.invariant_report.total_violations, 0);
+        // j3 backfills at t=1, ends t=31 ≤ 100; head starts at t=100.
+        // Waits: j1=0, j2=99, j3=0 → mean = 33.
+        assert_eq!(report.metrics.mean_wait_sec, 33.0);
+    }
+
+    #[test]
+    fn conservation_invariant_covers_all_dimensions() {
+        let jobs = vec![rec(1, 0, 10, 2, 1, 500)];
+        let report = simulate(jobs, "FIFO_STRICT", cap(4, 2, 1000), true).unwrap();
+        assert_eq!(report.invariant_report.total_violations, 0);
     }
 }

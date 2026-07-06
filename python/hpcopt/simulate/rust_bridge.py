@@ -57,6 +57,8 @@ def run_rust_simulation(
     trace_json_path: str | Path,
     policy: str = "FIFO_STRICT",
     capacity_cpus: int = 64,
+    capacity_gpus: int = 0,
+    capacity_mem: int = 0,
     strict_invariants: bool = False,
     output_path: str | Path | None = None,
 ) -> dict[str, Any]:
@@ -66,6 +68,10 @@ def run_rust_simulation(
         trace_json_path: Path to JSON file with job records.
         policy: FIFO_STRICT or EASY_BACKFILL_BASELINE.
         capacity_cpus: Cluster CPU capacity.
+        capacity_gpus: Cluster GPU capacity. 0 disables the GPU dimension
+            (job GPU requests are ignored; identical to the CPU-only engine).
+        capacity_mem: Cluster memory capacity, in the trace's requested_mem
+            unit. 0 disables the dimension.
         strict_invariants: Fail on invariant violations.
         output_path: Optional path for the report JSON.
 
@@ -103,6 +109,10 @@ def run_rust_simulation(
         "--output",
         str(resolved_output),
     ]
+    if capacity_gpus:
+        cmd += ["--capacity-gpus", str(capacity_gpus)]
+    if capacity_mem:
+        cmd += ["--capacity-mem", str(capacity_mem)]
     if strict_invariants:
         cmd.append("--strict-invariants")
 
