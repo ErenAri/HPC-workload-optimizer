@@ -163,19 +163,23 @@ congestion is understated; the cross-model comparison on identical input is the 
 
 Jobs carry measured mean power (watts) into the simulator, which integrates the cluster's power
 profile over time: total energy, peak power, and exposure above a facility cap
-(`--power-cap-watts`). Replaying PM100 on half the machine (a partition under a 700 kW cap)
-exposes the tradeoff energy-aware schedulers actually navigate:
+(`--power-cap-watts`). With `--enforce-power-cap`, dispatch holds the cap as a hard constraint —
+a job starts only if the cluster's draw stays under it. Replaying PM100 on half the machine
+(a partition under a 700 kW cap) exposes the tradeoff energy-aware schedulers actually navigate:
 
-| Policy | p95 BSLD | Energy (MWh) | Peak Power (kW) | Hours Above 700 kW Cap |
-|---|---|---|---|---|
-| FIFO | 5,604.71 | 1,227.8 | 863.0 | 0.04 |
-| EASY_BACKFILL | **152.33** | 1,227.8 | 759.5 | **1.37** |
+| Policy | Cap | p95 BSLD | Energy (MWh) | Peak Power (kW) | Hours Above Cap |
+|---|---|---|---|---|---|
+| FIFO | measured | 5,604.71 | 1,227.8 | 863.0 | 0.04 |
+| FIFO | **enforced** | 5,604.71 | 1,227.8 | 672.7 | 0.00 |
+| EASY_BACKFILL | measured | **152.33** | 1,227.8 | 759.5 | 1.37 |
+| EASY_BACKFILL | **enforced** | **152.24** | 1,227.8 | 700.0 | 0.00 |
 
-Energy is schedule-invariant (identical column) — what scheduling changes is *when* power is
-drawn. Backfilling wins p95 BSLD by 37× but sustains draw near the envelope, spending 34× longer
-above the cap; FIFO's instantaneous peak is actually higher, but it spikes briefly instead of
-sustaining. Single-metric energy claims hide exactly this, which is what the constraint contract
-is for.
+Three facts a single-metric leaderboard would hide: energy is schedule-invariant (identical
+column — scheduling changes *when* power is drawn, not how much); backfilling sustains draw near
+the envelope (EASY spends 34× longer above the cap than FIFO despite a lower instantaneous
+peak); and on this workload **enforcing the cap is free** — the over-cap draw reschedules into
+existing headroom with no measurable p95 BSLD cost (152.24 vs 152.33) and every job still
+completing. That last claim is exactly the kind of operator what-if the harness exists to grade.
 
 Reproduce: `python scripts/pm100_multiresource_study.py`
 

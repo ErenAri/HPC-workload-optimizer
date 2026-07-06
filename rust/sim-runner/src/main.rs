@@ -39,9 +39,16 @@ struct Args {
 
     /// Facility power cap in watts. When set (and the trace carries
     /// power_mean_watts), the report includes time and excess energy above
-    /// the cap. Measurement only: dispatch does not enforce the cap.
+    /// the cap. Measurement only unless --enforce-power-cap is also given.
     #[arg(long)]
     power_cap_watts: Option<f64>,
+
+    /// Treat --power-cap-watts as a hard dispatch constraint: a job starts
+    /// only if current draw + its mean watts stays at or under the cap.
+    /// Jobs whose own draw exceeds the cap can never start (reported via
+    /// jobs_completed < jobs_total).
+    #[arg(long, default_value_t = false)]
+    enforce_power_cap: bool,
 
     /// Fail immediately on invariant violations.
     #[arg(long, default_value_t = false)]
@@ -171,6 +178,8 @@ struct Metrics {
     #[serde(skip_serializing_if = "Option::is_none")]
     power_cap_watts: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    power_cap_enforced: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     seconds_above_power_cap: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     joules_above_power_cap: Option<f64>,
@@ -254,9 +263,10 @@ fn check_invariants(
     violations
 }
 
-fn start_job(job: Job, clock_ts: i64, free: &mut Resources) -> RunningJob {
+fn start_job(job: Job, clock_ts: i64, free: &mut Resources, headroom_watts: &mut f64) -> RunningJob {
     let runtime = job.runtime_actual_sec.max(0);
     free.sub(&job.requested);
+    *headroom_watts -= job.power_mean_watts;
     RunningJob {
         job_id: job.job_id,
         submit_ts: job.submit_ts,
@@ -317,6 +327,12 @@ impl PowerProfile {
     fn job_completed(&mut self, watts: f64) {
         self.current_watts = (self.current_watts - watts).max(0.0);
     }
+
+    /// Zero out float drift when nothing is running, so an enforced cap
+    /// never phantom-blocks a job that needs the full budget.
+    fn machine_idle(&mut self) {
+        self.current_watts = 0.0;
+    }
 }
 
 // ── FIFO dispatch ──────────────────────────────────────────────
@@ -324,18 +340,19 @@ impl PowerProfile {
 fn dispatch_fifo(
     queued: &mut VecDeque<Job>,
     free: &mut Resources,
+    headroom_watts: &mut f64,
     clock_ts: i64,
 ) -> Vec<RunningJob> {
     let mut started = Vec::new();
     loop {
-        let can_dispatch = queued
-            .front()
-            .is_some_and(|h| h.requested.cpus > 0 && h.requested.fits_in(free));
+        let can_dispatch = queued.front().is_some_and(|h| {
+            h.requested.cpus > 0 && h.requested.fits_in(free) && h.power_mean_watts <= *headroom_watts
+        });
         if !can_dispatch {
             break;
         }
         let job = queued.pop_front().unwrap();
-        started.push(start_job(job, clock_ts, free));
+        started.push(start_job(job, clock_ts, free, headroom_watts));
     }
     started
 }
@@ -352,45 +369,52 @@ fn dispatch_easy_backfill(
     queued: &mut VecDeque<Job>,
     running: &[RunningJob],
     free: &mut Resources,
+    headroom_watts: &mut f64,
     clock_ts: i64,
 ) -> Vec<RunningJob> {
     let mut started = Vec::new();
 
     // Step 1: Try head-of-queue dispatch (greedy, like FIFO)
     loop {
-        let can = queued
-            .front()
-            .is_some_and(|h| h.requested.cpus > 0 && h.requested.fits_in(free));
+        let can = queued.front().is_some_and(|h| {
+            h.requested.cpus > 0 && h.requested.fits_in(free) && h.power_mean_watts <= *headroom_watts
+        });
         if !can {
             break;
         }
         let job = queued.pop_front().unwrap();
-        started.push(start_job(job, clock_ts, free));
+        started.push(start_job(job, clock_ts, free, headroom_watts));
     }
 
     // If queue is empty or head can already run, no backfill needed.
     let head = match queued.front() {
-        Some(h) if !h.requested.fits_in(free) => h,
+        Some(h) if !h.requested.fits_in(free) || h.power_mean_watts > *headroom_watts => h,
         _ => return started,
     };
 
     // Step 2: Compute shadow time for the head-of-queue job.
     // Sort running jobs by end_ts ascending; accumulate freed resources
-    // (in every dimension) until head fits.
+    // (every dimension, and power headroom under an enforced cap) until
+    // head fits.
     let head_req = head.requested;
-    let mut ends: Vec<(i64, Resources)> =
-        running.iter().map(|j| (j.end_ts, j.requested)).collect();
+    let head_watts = head.power_mean_watts;
+    let mut ends: Vec<(i64, Resources, f64)> = running
+        .iter()
+        .map(|j| (j.end_ts, j.requested, j.power_mean_watts))
+        .collect();
     // Also include jobs we just started
     for s in &started {
-        ends.push((s.end_ts, s.requested));
+        ends.push((s.end_ts, s.requested, s.power_mean_watts));
     }
-    ends.sort_by_key(|&(t, _)| t);
+    ends.sort_by(|a, b| a.0.cmp(&b.0));
 
     let mut cumulative_free = *free;
+    let mut cumulative_headroom = *headroom_watts;
     let mut shadow_time = i64::MAX;
-    for (end_ts, res) in &ends {
+    for (end_ts, res, watts) in &ends {
         cumulative_free.add(res);
-        if head_req.fits_in(&cumulative_free) {
+        cumulative_headroom += watts;
+        if head_req.fits_in(&cumulative_free) && head_watts <= cumulative_headroom {
             shadow_time = *end_ts;
             break;
         }
@@ -401,10 +425,12 @@ fn dispatch_easy_backfill(
     for (i, job) in queued.iter().enumerate().skip(1) {
         if job.requested.cpus > 0
             && job.requested.fits_in(free)
+            && job.power_mean_watts <= *headroom_watts
             && clock_ts.saturating_add(job.runtime_actual_sec.max(0)) <= shadow_time
         {
             backfill_indices.push(i);
             free.sub(&job.requested);
+            *headroom_watts -= job.power_mean_watts;
         }
         if free.cpus == 0 {
             break;
@@ -414,12 +440,13 @@ fn dispatch_easy_backfill(
     // Restore reserved resources; start_job re-subtracts them below.
     for &idx in &backfill_indices {
         free.add(&queued[idx].requested);
+        *headroom_watts += queued[idx].power_mean_watts;
     }
 
     // Remove backfilled jobs from queue (reverse order to preserve indices).
     for &idx in backfill_indices.iter().rev() {
         let job = queued.remove(idx).unwrap();
-        started.push(start_job(job, clock_ts, free));
+        started.push(start_job(job, clock_ts, free, headroom_watts));
     }
 
     started
@@ -432,8 +459,12 @@ fn simulate(
     policy: &str,
     capacity: Resources,
     power_cap_watts: Option<f64>,
+    enforce_power_cap: bool,
     strict_invariants: bool,
 ) -> Result<SimulationReport> {
+    if enforce_power_cap && power_cap_watts.is_none() {
+        anyhow::bail!("--enforce-power-cap requires --power-cap-watts");
+    }
     // Normalize: a dimension with capacity 0 is not modeled — zero the
     // request so all fit/conservation checks degrade to CPU-only behavior.
     let mut jobs: Vec<Job> = records
@@ -501,6 +532,9 @@ fn simulate(
                 i += 1;
             }
         }
+        if running.is_empty() {
+            power.machine_idle();
+        }
 
         // Admit newly submitted jobs to queue.
         while let Some(job) = jobs.get(submit_idx) {
@@ -511,12 +545,17 @@ fn simulate(
             submit_idx += 1;
         }
 
-        // Policy dispatch.
+        // Policy dispatch. Headroom is recomputed from the live draw each
+        // event, so float drift cannot accumulate across the run.
+        let mut headroom_watts = match power_cap_watts {
+            Some(cap) if enforce_power_cap => (cap - power.current_watts).max(0.0),
+            _ => f64::INFINITY,
+        };
         let newly_started = match policy {
             "EASY_BACKFILL_BASELINE" => {
-                dispatch_easy_backfill(&mut queued, &running, &mut free, clock_ts)
+                dispatch_easy_backfill(&mut queued, &running, &mut free, &mut headroom_watts, clock_ts)
             }
-            _ => dispatch_fifo(&mut queued, &mut free, clock_ts),
+            _ => dispatch_fifo(&mut queued, &mut free, &mut headroom_watts, clock_ts),
         };
         for job in &newly_started {
             power.job_started(job.power_mean_watts);
@@ -599,6 +638,7 @@ fn simulate(
             power_peak_watts,
             power_mean_watts,
             power_cap_watts: cap_metrics,
+            power_cap_enforced: cap_metrics.map(|_| enforce_power_cap),
             seconds_above_power_cap: cap_metrics.map(|_| power.seconds_above_cap),
             joules_above_power_cap: cap_metrics.map(|_| power.joules_above_cap),
         },
@@ -648,7 +688,14 @@ fn main() -> Result<()> {
         capacity.mem
     );
 
-    let report = simulate(jobs, &args.policy, capacity, args.power_cap_watts, args.strict_invariants)?;
+    let report = simulate(
+        jobs,
+        &args.policy,
+        capacity,
+        args.power_cap_watts,
+        args.enforce_power_cap,
+        args.strict_invariants,
+    )?;
 
     eprintln!(
         "sim-runner: done. p95_bsld={:.3}, util={:.3}, makespan={}s",
@@ -738,8 +785,8 @@ mod tests {
         // capacity_gpus == 0 → GPU requests must not affect scheduling.
         let jobs_with_gpus = vec![rec(1, 0, 100, 4, 999, 0), rec(2, 0, 100, 4, 999, 0)];
         let jobs_plain = vec![rec(1, 0, 100, 4, 0, 0), rec(2, 0, 100, 4, 0, 0)];
-        let a = simulate(jobs_with_gpus, "FIFO_STRICT", cap(8, 0, 0), None, true).unwrap();
-        let b = simulate(jobs_plain, "FIFO_STRICT", cap(8, 0, 0), None, true).unwrap();
+        let a = simulate(jobs_with_gpus, "FIFO_STRICT", cap(8, 0, 0), None, false, true).unwrap();
+        let b = simulate(jobs_plain, "FIFO_STRICT", cap(8, 0, 0), None, false, true).unwrap();
         assert_eq!(a.metrics.mean_wait_sec, b.metrics.mean_wait_sec);
         assert_eq!(a.metrics.makespan_sec, b.metrics.makespan_sec);
         assert_eq!(a.metrics.p95_bsld, b.metrics.p95_bsld);
@@ -753,7 +800,7 @@ mod tests {
     fn gpu_scarcity_serializes_jobs_with_free_cpus() {
         // Plenty of CPUs, one GPU: two 1-GPU jobs must run back to back.
         let jobs = vec![rec(1, 0, 100, 1, 1, 0), rec(2, 0, 100, 1, 1, 0)];
-        let report = simulate(jobs, "FIFO_STRICT", cap(64, 1, 0), None, true).unwrap();
+        let report = simulate(jobs, "FIFO_STRICT", cap(64, 1, 0), None, false, true).unwrap();
         assert_eq!(report.metrics.jobs_completed, 2);
         // Second job waits the full 100s runtime of the first.
         assert_eq!(report.metrics.mean_wait_sec, 50.0);
@@ -765,7 +812,7 @@ mod tests {
     #[test]
     fn mem_scarcity_serializes_jobs_with_free_cpus() {
         let jobs = vec![rec(1, 0, 100, 1, 0, 800), rec(2, 0, 100, 1, 0, 800)];
-        let report = simulate(jobs, "FIFO_STRICT", cap(64, 0, 1000), None, true).unwrap();
+        let report = simulate(jobs, "FIFO_STRICT", cap(64, 0, 1000), None, false, true).unwrap();
         assert_eq!(report.metrics.mean_wait_sec, 50.0);
         assert_eq!(report.metrics.makespan_sec, 200);
         assert_eq!(report.metrics.capacity_mem, Some(1000));
@@ -786,7 +833,7 @@ mod tests {
             rec(3, 1, 50, 1, 0, 0),
             rec(5, 1, 200, 1, 0, 0),
         ];
-        let report = simulate(jobs, "EASY_BACKFILL_BASELINE", cap(8, 2, 0), None, true).unwrap();
+        let report = simulate(jobs, "EASY_BACKFILL_BASELINE", cap(8, 2, 0), None, false, true).unwrap();
         assert_eq!(report.metrics.jobs_completed, 4);
         assert_eq!(report.invariant_report.total_violations, 0);
         // job3 backfilled at t=1 (0 wait); job2 starts at t=100 (99 wait);
@@ -807,7 +854,7 @@ mod tests {
             rec(2, 1, 100, 1, 2, 0),
             rec(3, 1, 30, 1, 1, 0),
         ];
-        let report = simulate(jobs, "EASY_BACKFILL_BASELINE", cap(8, 2, 0), None, true).unwrap();
+        let report = simulate(jobs, "EASY_BACKFILL_BASELINE", cap(8, 2, 0), None, false, true).unwrap();
         assert_eq!(report.invariant_report.total_violations, 0);
         // j3 backfills at t=1, ends t=31 ≤ 100; head starts at t=100.
         // Waits: j1=0, j2=99, j3=0 → mean = 33.
@@ -819,7 +866,7 @@ mod tests {
     #[test]
     fn power_metrics_absent_without_power_data() {
         let jobs = vec![rec(1, 0, 100, 4, 0, 0)];
-        let report = simulate(jobs, "FIFO_STRICT", cap(8, 0, 0), Some(500.0), true).unwrap();
+        let report = simulate(jobs, "FIFO_STRICT", cap(8, 0, 0), Some(500.0), false, true).unwrap();
         assert!(report.metrics.energy_joules_total.is_none());
         assert!(report.metrics.power_peak_watts.is_none());
         assert!(report.metrics.power_cap_watts.is_none());
@@ -831,8 +878,8 @@ mod tests {
         // Two 400 W jobs, 100 s each. Concurrent (capacity 8): peak 800 W.
         // Serialized (capacity 4): peak 400 W. Energy identical: 80 kJ.
         let jobs = || vec![rec_power(1, 0, 100, 4, 400.0), rec_power(2, 0, 100, 4, 400.0)];
-        let wide = simulate(jobs(), "FIFO_STRICT", cap(8, 0, 0), None, true).unwrap();
-        let narrow = simulate(jobs(), "FIFO_STRICT", cap(4, 0, 0), None, true).unwrap();
+        let wide = simulate(jobs(), "FIFO_STRICT", cap(8, 0, 0), None, false, true).unwrap();
+        let narrow = simulate(jobs(), "FIFO_STRICT", cap(4, 0, 0), None, false, true).unwrap();
 
         assert_eq!(wide.metrics.energy_joules_total, Some(80_000.0));
         assert_eq!(narrow.metrics.energy_joules_total, Some(80_000.0));
@@ -848,14 +895,14 @@ mod tests {
         // Concurrent draw 800 W for 100 s against a 600 W cap:
         // 100 s above cap, 200 W excess * 100 s = 20 kJ above cap.
         let jobs = vec![rec_power(1, 0, 100, 4, 400.0), rec_power(2, 0, 100, 4, 400.0)];
-        let report = simulate(jobs, "FIFO_STRICT", cap(8, 0, 0), Some(600.0), true).unwrap();
+        let report = simulate(jobs, "FIFO_STRICT", cap(8, 0, 0), Some(600.0), false, true).unwrap();
         assert_eq!(report.metrics.power_cap_watts, Some(600.0));
         assert_eq!(report.metrics.seconds_above_power_cap, Some(100));
         assert_eq!(report.metrics.joules_above_power_cap, Some(20_000.0));
 
         // Serialized under the same cap: never above it.
         let jobs = vec![rec_power(1, 0, 100, 4, 400.0), rec_power(2, 0, 100, 4, 400.0)];
-        let report = simulate(jobs, "FIFO_STRICT", cap(4, 0, 0), Some(600.0), true).unwrap();
+        let report = simulate(jobs, "FIFO_STRICT", cap(4, 0, 0), Some(600.0), false, true).unwrap();
         assert_eq!(report.metrics.seconds_above_power_cap, Some(0));
         assert_eq!(report.metrics.joules_above_power_cap, Some(0.0));
     }
@@ -865,16 +912,89 @@ mod tests {
         // Job 1 runs 0-100 (500 W); job 2 submits at 300, runs to 400 (500 W).
         // Energy 100 kJ over a 400 s makespan -> mean 250 W, peak 500 W.
         let jobs = vec![rec_power(1, 0, 100, 4, 500.0), rec_power(2, 300, 100, 4, 500.0)];
-        let report = simulate(jobs, "FIFO_STRICT", cap(8, 0, 0), None, true).unwrap();
+        let report = simulate(jobs, "FIFO_STRICT", cap(8, 0, 0), None, false, true).unwrap();
         assert_eq!(report.metrics.energy_joules_total, Some(100_000.0));
         assert_eq!(report.metrics.power_peak_watts, Some(500.0));
         assert_eq!(report.metrics.power_mean_watts, Some(250.0));
     }
 
+    // ── Cap-enforcing dispatch tests ───────────────────────────
+
+    #[test]
+    fn enforced_cap_serializes_jobs_and_eliminates_exposure() {
+        // Two 400 W jobs under a 600 W enforced cap: they must run back to
+        // back even though CPUs allow concurrency. Zero time above cap; the
+        // BSLD price is the second job's 100 s wait.
+        let jobs = vec![rec_power(1, 0, 100, 4, 400.0), rec_power(2, 0, 100, 4, 400.0)];
+        let report =
+            simulate(jobs, "FIFO_STRICT", cap(8, 0, 0), Some(600.0), true, true).unwrap();
+        assert_eq!(report.metrics.jobs_completed, 2);
+        assert_eq!(report.metrics.power_cap_enforced, Some(true));
+        assert_eq!(report.metrics.seconds_above_power_cap, Some(0));
+        assert_eq!(report.metrics.joules_above_power_cap, Some(0.0));
+        assert_eq!(report.metrics.power_peak_watts, Some(400.0));
+        assert_eq!(report.metrics.mean_wait_sec, 50.0);
+        assert_eq!(report.metrics.makespan_sec, 200);
+        // Energy unchanged by enforcement.
+        assert_eq!(report.metrics.energy_joules_total, Some(80_000.0));
+    }
+
+    #[test]
+    fn easy_backfill_respects_power_shadow_time() {
+        // Cap 1000 W enforced. Job1: 900 W, 100 s (running). Head job2 needs
+        // 900 W -> blocked by power alone (CPUs are free), shadow = 100.
+        // Job3: 50 W, 50 s -> fits headroom (100 W) and ends before shadow:
+        // backfills. Job4: 50 W, 200 s -> would outlive the shadow: must not.
+        let jobs = vec![
+            rec_power(1, 0, 100, 1, 900.0),
+            rec_power(2, 1, 100, 1, 900.0),
+            rec_power(3, 1, 50, 1, 50.0),
+            rec_power(4, 1, 200, 1, 50.0),
+        ];
+        let report =
+            simulate(jobs, "EASY_BACKFILL_BASELINE", cap(64, 0, 0), Some(1000.0), true, true)
+                .unwrap();
+        assert_eq!(report.metrics.jobs_completed, 4);
+        assert_eq!(report.metrics.seconds_above_power_cap, Some(0));
+        // Waits: j1=0, j2=99 (starts at 100), j3=0 (backfilled at t=1),
+        // j4 starts at t=200 when j2 finishes... j4 only needs 50 W: at
+        // t=100 draw is 900 (j2) -> headroom 100 -> j4 starts at 100.
+        // Waits: 0 + 99 + 0 + 99 = 198 -> mean 49.5.
+        assert_eq!(report.metrics.mean_wait_sec, 49.5);
+    }
+
+    #[test]
+    fn measurement_only_cap_does_not_change_dispatch() {
+        let jobs = || vec![rec_power(1, 0, 100, 4, 400.0), rec_power(2, 0, 100, 4, 400.0)];
+        let unmetered = simulate(jobs(), "FIFO_STRICT", cap(8, 0, 0), None, false, true).unwrap();
+        let metered =
+            simulate(jobs(), "FIFO_STRICT", cap(8, 0, 0), Some(600.0), false, true).unwrap();
+        assert_eq!(unmetered.metrics.mean_wait_sec, metered.metrics.mean_wait_sec);
+        assert_eq!(unmetered.metrics.makespan_sec, metered.metrics.makespan_sec);
+        assert_eq!(metered.metrics.power_cap_enforced, Some(false));
+        assert_eq!(metered.metrics.seconds_above_power_cap, Some(100));
+    }
+
+    #[test]
+    fn job_drawing_more_than_the_cap_never_starts() {
+        let jobs = vec![rec_power(1, 0, 100, 4, 900.0), rec_power(2, 0, 100, 4, 100.0)];
+        let report =
+            simulate(jobs, "FIFO_STRICT", cap(8, 0, 0), Some(600.0), true, true).unwrap();
+        // FIFO head blocks forever; the sim terminates and reports honestly.
+        assert_eq!(report.metrics.jobs_completed, 0);
+        assert_eq!(report.metrics.jobs_total, 2);
+    }
+
+    #[test]
+    fn enforce_without_cap_is_an_error() {
+        let jobs = vec![rec(1, 0, 100, 4, 0, 0)];
+        assert!(simulate(jobs, "FIFO_STRICT", cap(8, 0, 0), None, true, true).is_err());
+    }
+
     #[test]
     fn conservation_invariant_covers_all_dimensions() {
         let jobs = vec![rec(1, 0, 10, 2, 1, 500)];
-        let report = simulate(jobs, "FIFO_STRICT", cap(4, 2, 1000), None, true).unwrap();
+        let report = simulate(jobs, "FIFO_STRICT", cap(4, 2, 1000), None, false, true).unwrap();
         assert_eq!(report.invariant_report.total_violations, 0);
     }
 }

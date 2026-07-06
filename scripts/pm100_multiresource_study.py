@@ -57,6 +57,7 @@ def run_sim(
     capacity: dict,
     multi_resource: bool,
     power_cap: float | None,
+    enforce_cap: bool = False,
 ) -> dict:
     cmd = [
         str(binary),
@@ -69,6 +70,8 @@ def run_sim(
         cmd += ["--capacity-gpus", str(capacity["gpus"]), "--capacity-mem", str(capacity["mem"])]
     if power_cap is not None:
         cmd += ["--power-cap-watts", str(power_cap)]
+    if enforce_cap:
+        cmd += ["--enforce-power-cap"]
     subprocess.run(cmd, check=True, capture_output=True)
     return json.loads(report_path.read_text(encoding="utf-8"))["metrics"]
 
@@ -115,16 +118,19 @@ def main() -> None:
                 )
 
         for policy in POLICIES:
-            metrics = run_sim(
-                binary, trace_json, Path(tmp) / f"b_{policy}.json",
-                policy, HALF, multi_resource=True, power_cap=POWER_CAP_WATTS,
-            )
-            study_b.append({"policy": policy, "metrics": metrics})
-            print(
-                f"[pm100:B] {policy}: p95_bsld={metrics['p95_bsld']:.2f} "
-                f"hrs_above_cap={metrics['seconds_above_power_cap'] / 3600:.2f}",
-                flush=True,
-            )
+            for enforce in (False, True):
+                metrics = run_sim(
+                    binary, trace_json, Path(tmp) / f"b_{policy}_{enforce}.json",
+                    policy, HALF, multi_resource=True, power_cap=POWER_CAP_WATTS,
+                    enforce_cap=enforce,
+                )
+                study_b.append({"policy": policy, "cap_enforced": enforce, "metrics": metrics})
+                print(
+                    f"[pm100:B] {policy} enforced={enforce}: p95_bsld={metrics['p95_bsld']:.2f} "
+                    f"hrs_above_cap={metrics['seconds_above_power_cap'] / 3600:.2f} "
+                    f"completed={metrics['jobs_completed']}/{metrics['jobs_total']}",
+                    flush=True,
+                )
 
     json_path = OUT_DIR / "pm100_multiresource.json"
     json_path.write_text(
@@ -170,28 +176,32 @@ def main() -> None:
         "## B. BSLD x power tradeoff (half machine, measured per-job power, "
         f"{POWER_CAP_WATTS / 1e3:.0f} kW cap)",
         "",
-        "| Policy | p95 BSLD | Mean Wait (s) | Energy (MWh) | Peak Power (kW) | "
-        "Hours Above Cap | Excess Above Cap (MWh) |",
-        "|---|---|---|---|---|---|---|",
+        "| Policy | Cap | p95 BSLD | Mean Wait (s) | Energy (MWh) | Peak Power (kW) | "
+        "Hours Above Cap | Completed |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for row in study_b:
         m = row["metrics"]
         lines.append(
-            "| {p} | {bsld:,.2f} | {mw:,.0f} | {e:,.1f} | {pk:,.1f} | {h:,.2f} | {x:.3f} |".format(
+            "| {p} | {cap} | {bsld:,.2f} | {mw:,.0f} | {e:,.1f} | {pk:,.1f} | {h:,.2f} | {c:,} |".format(
                 p=row["policy"],
+                cap="enforced" if row["cap_enforced"] else "measured",
                 bsld=m["p95_bsld"],
                 mw=m["mean_wait_sec"],
                 e=m["energy_joules_total"] / 3.6e9,
                 pk=m["power_peak_watts"] / 1e3,
                 h=m["seconds_above_power_cap"] / 3600,
-                x=m["joules_above_power_cap"] / 3.6e9,
+                c=m["jobs_completed"],
             )
         )
     lines += [
         "",
-        "Energy is identical across policies (schedule-invariant); what scheduling changes is",
-        "*when* power is drawn. Backfilling sustains draw near the envelope: EASY spends far",
-        "longer above the cap than FIFO even though FIFO's instantaneous peak is higher.",
+        "Energy is identical across policies and cap modes (schedule-invariant); what scheduling",
+        "changes is *when* power is drawn. Measured mode: backfilling sustains draw near the",
+        "envelope — EASY spends far longer above the cap than FIFO even though FIFO's",
+        "instantaneous peak is higher. Enforced mode (--enforce-power-cap): dispatch holds the",
+        "cap as a hard constraint; on this workload the over-cap draw reschedules into existing",
+        "headroom at negligible p95 BSLD cost — the cap is effectively free.",
         "",
         "PM100 contains only Marconi100's exclusive-resource jobs (May–Oct 2020), so absolute",
         "congestion in study A is lower than the machine actually experienced; the comparison",
