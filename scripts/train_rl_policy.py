@@ -25,6 +25,13 @@ import logging
 import sys
 from pathlib import Path
 
+# torch must be imported before pandas/pyarrow on Windows: if pyarrow's DLLs
+# load first, torch's c10.dll fails to initialize (WinError 1114).
+try:
+    import torch  # noqa: F401
+except ImportError:
+    pass
+
 import pandas as pd
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

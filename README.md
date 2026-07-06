@@ -60,6 +60,7 @@ Results are published win or lose — the harness exists to prevent cherry-picki
 | SDSC-SP2 | EASY_BACKFILL_TSAFRIR | 358.13 | 83.4% | 21,059 | 115,221 |
 | SDSC-SP2 | ML_BACKFILL_P50 | 452.98 | 83.4% | 23,911 | 120,686 |
 | SDSC-SP2 | ML_BACKFILL_P10 | 364.08 | 83.4% | 18,141 | 93,645 |
+| SDSC-SP2 | RL_TRAINED ² | 271.83 | 83.3% | 31,226 | 80,535 |
 | CTC-SP2 | FIFO_STRICT | 188.05 | 55.5% | 6,183 | 34,361 |
 | CTC-SP2 | EASY_BACKFILL_BASELINE | 9.93 | 55.5% | 2,070 | 14,087 |
 | CTC-SP2 | CONSERVATIVE_BACKFILL_BASELINE | 20.89 | 55.5% | 2,270 | 15,824 |
@@ -69,6 +70,7 @@ Results are published win or lose — the harness exists to prevent cherry-picki
 | CTC-SP2 | EASY_BACKFILL_TSAFRIR | 6.28 | 55.5% | 1,454 | 9,132 |
 | CTC-SP2 | ML_BACKFILL_P50 | 9.11 | 55.5% | 1,831 | 12,801 |
 | CTC-SP2 | ML_BACKFILL_P10 | 6.61 | 55.5% | 986 | 5,719 |
+| CTC-SP2 | RL_TRAINED ² | 3.85 | 55.5% | 714 | 2,750 |
 | HPC2N | FIFO_STRICT | 286.98 | 59.6% | 16,189 | 68,219 |
 | HPC2N | EASY_BACKFILL_BASELINE | 85.85 | 59.6% | 10,252 | 40,367 |
 | HPC2N | CONSERVATIVE_BACKFILL_BASELINE | — ¹ | — | — | — |
@@ -78,10 +80,15 @@ Results are published win or lose — the harness exists to prevent cherry-picki
 | HPC2N | EASY_BACKFILL_TSAFRIR | 48.04 | 59.6% | 9,308 | 36,460 |
 | HPC2N | ML_BACKFILL_P50 | 74.35 | 59.6% | 10,138 | 39,628 |
 | HPC2N | ML_BACKFILL_P10 | 62.63 | 59.6% | 9,755 | 36,791 |
+| HPC2N | RL_TRAINED ² | 31.09 | 59.6% | 8,885 | 30,708 |
 
 ¹ Not run: conservative backfill's full-queue reservations are computationally prohibitive on
 HPC2N (~202K jobs; >3.4 h of simulation without completing). Its results on the other two traces
 show it is not a front-runner. The sweep is resumable, so the cell can be filled in later.
+
+² MaskablePPO, 200K timesteps per trace, single seed, RLScheduler (Zhang et al. SC'20)
+hyperparameters, trained on random windows of the *same* trace it is evaluated on
+(in-distribution, per the RLScheduler protocol). Cross-trace generalization is untested.
 
 <!-- POLICY_MATRIX:END -->
 
@@ -97,9 +104,14 @@ show it is not a front-runner. The sweep is resumable, so the cell can be filled
 - **p95 BSLD trades against utilization and mean wait.** SJF wins p95 BSLD on SDSC-SP2 but idles
   more of the machine (79.9% vs 83.4%) and triples mean wait vs Tsafrir — single-metric
   leaderboards mislead, which is why `hpcopt` gates verdicts on a constraint contract instead.
+- **RL beats every prediction-based policy, but not simple queue ordering.** The MaskablePPO
+  agent beats Tsafrir, ML backfill, and EASY on all three traces (and edges out SJF on CTC-SP2:
+  3.85 vs 4.11) while holding EASY-class utilization — yet plain FAIRSHARE still wins two of
+  three traces at zero training cost. Caveats in footnote ²: single seed, evaluated
+  in-distribution on the training trace.
 
-`RL_TRAINED` (MaskablePPO) requires the `[rl]` extras and a trained checkpoint; it is not yet
-included in the published matrix. Train with `scripts/train_rl_policy.py`.
+`RL_TRAINED` requires the `[rl]` extras; reproduce the checkpoints with
+`scripts/train_rl_policy.py` (~20 min per trace on an RTX 2060).
 
 Reproduce: `python scripts/policy_matrix.py`
 

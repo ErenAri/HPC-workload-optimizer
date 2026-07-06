@@ -57,6 +57,7 @@ POLICIES = [
     "EASY_BACKFILL_TSAFRIR",
     "ML_BACKFILL_P50",
     "ML_BACKFILL_P10",
+    "RL_TRAINED",
     "CONSERVATIVE_BACKFILL_BASELINE",
 ]
 
@@ -79,6 +80,14 @@ def _cell_cost(trace: dict, policy: str) -> int:
 
 
 def run_cell(trace: dict, policy: str) -> dict:
+    if policy == "RL_TRAINED":
+        # torch must load before pandas/pyarrow on Windows: if pyarrow's DLLs
+        # load first, torch's c10.dll fails to initialize (WinError 1114).
+        try:
+            import torch  # noqa: F401
+        except ImportError:
+            pass
+
     import pandas as pd
     from hpcopt.simulate.core import run_simulation_from_trace
 
@@ -93,6 +102,15 @@ def run_cell(trace: dict, policy: str) -> dict:
             return {"status": "skipped", "reason": f"missing model dir {model_dir.name}"}
         runtime_predictor = RuntimeQuantilePredictor(model_dir)
 
+    policy_context = None
+    if policy == "RL_TRAINED":
+        from hpcopt.rl.inference import RLPolicy
+
+        checkpoint = MODELS_DIR / "rl" / f"ppo_{trace['key']}.zip"
+        if not checkpoint.exists():
+            return {"status": "skipped", "reason": f"missing RL checkpoint {checkpoint.name}"}
+        policy_context = {"rl_policy": RLPolicy.load(checkpoint)}
+
     started = time.perf_counter()
     result = run_simulation_from_trace(
         trace_df=trace_df,
@@ -101,6 +119,7 @@ def run_cell(trace: dict, policy: str) -> dict:
         run_id=f"matrix_{trace['key']}_{policy.lower()}",
         strict_invariants=False,
         runtime_predictor=runtime_predictor,
+        policy_context=policy_context,
     )
     elapsed = time.perf_counter() - started
 
