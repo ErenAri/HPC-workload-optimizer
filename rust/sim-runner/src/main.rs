@@ -37,6 +37,12 @@ struct Args {
     #[arg(long, default_value_t = 0)]
     capacity_mem: u64,
 
+    /// Facility power cap in watts. When set (and the trace carries
+    /// power_mean_watts), the report includes time and excess energy above
+    /// the cap. Measurement only: dispatch does not enforce the cap.
+    #[arg(long)]
+    power_cap_watts: Option<f64>,
+
     /// Fail immediately on invariant violations.
     #[arg(long, default_value_t = false)]
     strict_invariants: bool,
@@ -96,6 +102,10 @@ struct JobRecord {
     requested_gpus: u32,
     #[serde(default)]
     requested_mem: u64,
+    /// Mean power draw while running (watts, summed over the job's nodes).
+    /// 0 = no power data; power metrics are omitted from the report.
+    #[serde(default)]
+    power_mean_watts: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -104,6 +114,7 @@ struct Job {
     submit_ts: i64,
     runtime_actual_sec: i64,
     requested: Resources,
+    power_mean_watts: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -113,6 +124,7 @@ struct RunningJob {
     start_ts: i64,
     end_ts: i64,
     requested: Resources,
+    power_mean_watts: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -146,6 +158,22 @@ struct Metrics {
     utilization_gpu_mean: Option<f64>,
     makespan_sec: i64,
     invariant_violations: usize,
+    /// Power metrics: present only when the trace carries power_mean_watts.
+    /// Energy is schedule-invariant (a job draws the same joules whenever it
+    /// runs); peak power and above-cap exposure are schedule-DEPENDENT and
+    /// are what energy-aware policies actually trade against BSLD.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    energy_joules_total: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    power_peak_watts: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    power_mean_watts: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    power_cap_watts: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    seconds_above_power_cap: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    joules_above_power_cap: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -235,6 +263,59 @@ fn start_job(job: Job, clock_ts: i64, free: &mut Resources) -> RunningJob {
         start_ts: clock_ts,
         end_ts: clock_ts.saturating_add(runtime),
         requested: job.requested,
+        power_mean_watts: job.power_mean_watts,
+    }
+}
+
+/// Time-integrated cluster power profile. Draw changes only at job
+/// start/complete events, so integrating piecewise-constant segments between
+/// event timestamps is exact (given per-job mean power).
+struct PowerProfile {
+    current_watts: f64,
+    peak_watts: f64,
+    energy_joules: f64,
+    cap_watts: Option<f64>,
+    seconds_above_cap: i64,
+    joules_above_cap: f64,
+    last_ts: i64,
+}
+
+impl PowerProfile {
+    fn new(start_ts: i64, cap_watts: Option<f64>) -> Self {
+        PowerProfile {
+            current_watts: 0.0,
+            peak_watts: 0.0,
+            energy_joules: 0.0,
+            cap_watts,
+            seconds_above_cap: 0,
+            joules_above_cap: 0.0,
+            last_ts: start_ts,
+        }
+    }
+
+    /// Account the constant-draw segment [last_ts, now_ts) — call BEFORE
+    /// applying this instant's start/complete events.
+    fn advance_to(&mut self, now_ts: i64) {
+        let dt = now_ts.saturating_sub(self.last_ts).max(0);
+        if dt > 0 {
+            self.energy_joules += self.current_watts * dt as f64;
+            if let Some(cap) = self.cap_watts {
+                if self.current_watts > cap {
+                    self.seconds_above_cap += dt;
+                    self.joules_above_cap += (self.current_watts - cap) * dt as f64;
+                }
+            }
+        }
+        self.last_ts = now_ts;
+    }
+
+    fn job_started(&mut self, watts: f64) {
+        self.current_watts += watts;
+        self.peak_watts = self.peak_watts.max(self.current_watts);
+    }
+
+    fn job_completed(&mut self, watts: f64) {
+        self.current_watts = (self.current_watts - watts).max(0.0);
     }
 }
 
@@ -350,6 +431,7 @@ fn simulate(
     records: Vec<JobRecord>,
     policy: &str,
     capacity: Resources,
+    power_cap_watts: Option<f64>,
     strict_invariants: bool,
 ) -> Result<SimulationReport> {
     // Normalize: a dimension with capacity 0 is not modeled — zero the
@@ -365,8 +447,10 @@ fn simulate(
                 gpus: if capacity.gpus == 0 { 0 } else { r.requested_gpus },
                 mem: if capacity.mem == 0 { 0 } else { r.requested_mem },
             },
+            power_mean_watts: r.power_mean_watts.max(0.0),
         })
         .collect();
+    let has_power_data = jobs.iter().any(|j| j.power_mean_watts > 0.0);
     jobs.sort_by(|a, b| a.submit_ts.cmp(&b.submit_ts).then_with(|| a.job_id.cmp(&b.job_id)));
 
     let total_jobs = jobs.len();
@@ -381,6 +465,7 @@ fn simulate(
     let mut total_gpu_seconds: i128 = 0;
     let mut completed: Vec<CompletedJob> = Vec::with_capacity(total_jobs);
     let mut all_violations: Vec<String> = Vec::new();
+    let mut power = PowerProfile::new(clock_ts, power_cap_watts);
 
     while completed.len() < total_jobs {
         let next_submit = jobs.get(submit_idx).map(|j| j.submit_ts).unwrap_or(i64::MAX);
@@ -390,6 +475,7 @@ fn simulate(
             break;
         }
         clock_ts = next_submit.min(next_complete);
+        power.advance_to(clock_ts);
 
         // Complete finished jobs (deterministic: complete before submit at same timestamp).
         let mut i = 0;
@@ -397,6 +483,7 @@ fn simulate(
             if running[i].end_ts == clock_ts {
                 let rj = running.swap_remove(i);
                 free.add(&rj.requested);
+                power.job_completed(rj.power_mean_watts);
                 let wait = rj.start_ts.saturating_sub(rj.submit_ts).max(0);
                 let runtime = rj.end_ts.saturating_sub(rj.start_ts).max(0);
                 total_cpu_seconds += i128::from(rj.requested.cpus) * i128::from(runtime);
@@ -431,6 +518,9 @@ fn simulate(
             }
             _ => dispatch_fifo(&mut queued, &mut free, clock_ts),
         };
+        for job in &newly_started {
+            power.job_started(job.power_mean_watts);
+        }
         running.extend(newly_started);
 
         // Invariant check.
@@ -476,6 +566,18 @@ fn simulate(
 
     let violation_examples: Vec<String> = all_violations.iter().take(20).cloned().collect();
 
+    let (energy_joules_total, power_peak_watts, power_mean_watts) = if has_power_data {
+        let mean = if makespan > 0 {
+            power.energy_joules / makespan as f64
+        } else {
+            0.0
+        };
+        (Some(power.energy_joules), Some(power.peak_watts), Some(mean))
+    } else {
+        (None, None, None)
+    };
+    let cap_metrics = power_cap_watts.filter(|_| has_power_data);
+
     Ok(SimulationReport {
         policy_id: policy.to_string(),
         run_id: format!("rust_sim_{}", policy.to_ascii_lowercase()),
@@ -493,6 +595,12 @@ fn simulate(
             utilization_gpu_mean,
             makespan_sec: makespan,
             invariant_violations: all_violations.len(),
+            energy_joules_total,
+            power_peak_watts,
+            power_mean_watts,
+            power_cap_watts: cap_metrics,
+            seconds_above_power_cap: cap_metrics.map(|_| power.seconds_above_cap),
+            joules_above_power_cap: cap_metrics.map(|_| power.joules_above_cap),
         },
         invariant_report: InvariantReport {
             strict: strict_invariants,
@@ -540,7 +648,7 @@ fn main() -> Result<()> {
         capacity.mem
     );
 
-    let report = simulate(jobs, &args.policy, capacity, args.strict_invariants)?;
+    let report = simulate(jobs, &args.policy, capacity, args.power_cap_watts, args.strict_invariants)?;
 
     eprintln!(
         "sim-runner: done. p95_bsld={:.3}, util={:.3}, makespan={}s",
@@ -600,6 +708,14 @@ mod tests {
             requested_cpus: cpus,
             requested_gpus: gpus,
             requested_mem: mem,
+            power_mean_watts: 0.0,
+        }
+    }
+
+    fn rec_power(job_id: u64, submit_ts: i64, runtime: i64, cpus: u32, watts: f64) -> JobRecord {
+        JobRecord {
+            power_mean_watts: watts,
+            ..rec(job_id, submit_ts, runtime, cpus, 0, 0)
         }
     }
 
@@ -622,8 +738,8 @@ mod tests {
         // capacity_gpus == 0 → GPU requests must not affect scheduling.
         let jobs_with_gpus = vec![rec(1, 0, 100, 4, 999, 0), rec(2, 0, 100, 4, 999, 0)];
         let jobs_plain = vec![rec(1, 0, 100, 4, 0, 0), rec(2, 0, 100, 4, 0, 0)];
-        let a = simulate(jobs_with_gpus, "FIFO_STRICT", cap(8, 0, 0), true).unwrap();
-        let b = simulate(jobs_plain, "FIFO_STRICT", cap(8, 0, 0), true).unwrap();
+        let a = simulate(jobs_with_gpus, "FIFO_STRICT", cap(8, 0, 0), None, true).unwrap();
+        let b = simulate(jobs_plain, "FIFO_STRICT", cap(8, 0, 0), None, true).unwrap();
         assert_eq!(a.metrics.mean_wait_sec, b.metrics.mean_wait_sec);
         assert_eq!(a.metrics.makespan_sec, b.metrics.makespan_sec);
         assert_eq!(a.metrics.p95_bsld, b.metrics.p95_bsld);
@@ -637,7 +753,7 @@ mod tests {
     fn gpu_scarcity_serializes_jobs_with_free_cpus() {
         // Plenty of CPUs, one GPU: two 1-GPU jobs must run back to back.
         let jobs = vec![rec(1, 0, 100, 1, 1, 0), rec(2, 0, 100, 1, 1, 0)];
-        let report = simulate(jobs, "FIFO_STRICT", cap(64, 1, 0), true).unwrap();
+        let report = simulate(jobs, "FIFO_STRICT", cap(64, 1, 0), None, true).unwrap();
         assert_eq!(report.metrics.jobs_completed, 2);
         // Second job waits the full 100s runtime of the first.
         assert_eq!(report.metrics.mean_wait_sec, 50.0);
@@ -649,7 +765,7 @@ mod tests {
     #[test]
     fn mem_scarcity_serializes_jobs_with_free_cpus() {
         let jobs = vec![rec(1, 0, 100, 1, 0, 800), rec(2, 0, 100, 1, 0, 800)];
-        let report = simulate(jobs, "FIFO_STRICT", cap(64, 0, 1000), true).unwrap();
+        let report = simulate(jobs, "FIFO_STRICT", cap(64, 0, 1000), None, true).unwrap();
         assert_eq!(report.metrics.mean_wait_sec, 50.0);
         assert_eq!(report.metrics.makespan_sec, 200);
         assert_eq!(report.metrics.capacity_mem, Some(1000));
@@ -670,7 +786,7 @@ mod tests {
             rec(3, 1, 50, 1, 0, 0),
             rec(5, 1, 200, 1, 0, 0),
         ];
-        let report = simulate(jobs, "EASY_BACKFILL_BASELINE", cap(8, 2, 0), true).unwrap();
+        let report = simulate(jobs, "EASY_BACKFILL_BASELINE", cap(8, 2, 0), None, true).unwrap();
         assert_eq!(report.metrics.jobs_completed, 4);
         assert_eq!(report.invariant_report.total_violations, 0);
         // job3 backfilled at t=1 (0 wait); job2 starts at t=100 (99 wait);
@@ -691,17 +807,74 @@ mod tests {
             rec(2, 1, 100, 1, 2, 0),
             rec(3, 1, 30, 1, 1, 0),
         ];
-        let report = simulate(jobs, "EASY_BACKFILL_BASELINE", cap(8, 2, 0), true).unwrap();
+        let report = simulate(jobs, "EASY_BACKFILL_BASELINE", cap(8, 2, 0), None, true).unwrap();
         assert_eq!(report.invariant_report.total_violations, 0);
         // j3 backfills at t=1, ends t=31 ≤ 100; head starts at t=100.
         // Waits: j1=0, j2=99, j3=0 → mean = 33.
         assert_eq!(report.metrics.mean_wait_sec, 33.0);
     }
 
+    // ── Power / energy tests ───────────────────────────────────
+
+    #[test]
+    fn power_metrics_absent_without_power_data() {
+        let jobs = vec![rec(1, 0, 100, 4, 0, 0)];
+        let report = simulate(jobs, "FIFO_STRICT", cap(8, 0, 0), Some(500.0), true).unwrap();
+        assert!(report.metrics.energy_joules_total.is_none());
+        assert!(report.metrics.power_peak_watts.is_none());
+        assert!(report.metrics.power_cap_watts.is_none());
+        assert!(report.metrics.seconds_above_power_cap.is_none());
+    }
+
+    #[test]
+    fn energy_is_schedule_invariant_but_peak_power_is_not() {
+        // Two 400 W jobs, 100 s each. Concurrent (capacity 8): peak 800 W.
+        // Serialized (capacity 4): peak 400 W. Energy identical: 80 kJ.
+        let jobs = || vec![rec_power(1, 0, 100, 4, 400.0), rec_power(2, 0, 100, 4, 400.0)];
+        let wide = simulate(jobs(), "FIFO_STRICT", cap(8, 0, 0), None, true).unwrap();
+        let narrow = simulate(jobs(), "FIFO_STRICT", cap(4, 0, 0), None, true).unwrap();
+
+        assert_eq!(wide.metrics.energy_joules_total, Some(80_000.0));
+        assert_eq!(narrow.metrics.energy_joules_total, Some(80_000.0));
+        assert_eq!(wide.metrics.power_peak_watts, Some(800.0));
+        assert_eq!(narrow.metrics.power_peak_watts, Some(400.0));
+        // Time-weighted mean power = energy / makespan.
+        assert_eq!(wide.metrics.power_mean_watts, Some(800.0)); // 80 kJ / 100 s
+        assert_eq!(narrow.metrics.power_mean_watts, Some(400.0)); // 80 kJ / 200 s
+    }
+
+    #[test]
+    fn power_cap_exposure_accounts_time_and_excess_joules() {
+        // Concurrent draw 800 W for 100 s against a 600 W cap:
+        // 100 s above cap, 200 W excess * 100 s = 20 kJ above cap.
+        let jobs = vec![rec_power(1, 0, 100, 4, 400.0), rec_power(2, 0, 100, 4, 400.0)];
+        let report = simulate(jobs, "FIFO_STRICT", cap(8, 0, 0), Some(600.0), true).unwrap();
+        assert_eq!(report.metrics.power_cap_watts, Some(600.0));
+        assert_eq!(report.metrics.seconds_above_power_cap, Some(100));
+        assert_eq!(report.metrics.joules_above_power_cap, Some(20_000.0));
+
+        // Serialized under the same cap: never above it.
+        let jobs = vec![rec_power(1, 0, 100, 4, 400.0), rec_power(2, 0, 100, 4, 400.0)];
+        let report = simulate(jobs, "FIFO_STRICT", cap(4, 0, 0), Some(600.0), true).unwrap();
+        assert_eq!(report.metrics.seconds_above_power_cap, Some(0));
+        assert_eq!(report.metrics.joules_above_power_cap, Some(0.0));
+    }
+
+    #[test]
+    fn power_integrates_idle_gaps_as_zero_draw() {
+        // Job 1 runs 0-100 (500 W); job 2 submits at 300, runs to 400 (500 W).
+        // Energy 100 kJ over a 400 s makespan -> mean 250 W, peak 500 W.
+        let jobs = vec![rec_power(1, 0, 100, 4, 500.0), rec_power(2, 300, 100, 4, 500.0)];
+        let report = simulate(jobs, "FIFO_STRICT", cap(8, 0, 0), None, true).unwrap();
+        assert_eq!(report.metrics.energy_joules_total, Some(100_000.0));
+        assert_eq!(report.metrics.power_peak_watts, Some(500.0));
+        assert_eq!(report.metrics.power_mean_watts, Some(250.0));
+    }
+
     #[test]
     fn conservation_invariant_covers_all_dimensions() {
         let jobs = vec![rec(1, 0, 10, 2, 1, 500)];
-        let report = simulate(jobs, "FIFO_STRICT", cap(4, 2, 1000), true).unwrap();
+        let report = simulate(jobs, "FIFO_STRICT", cap(4, 2, 1000), None, true).unwrap();
         assert_eq!(report.invariant_report.total_violations, 0);
     }
 }

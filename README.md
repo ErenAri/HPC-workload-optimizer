@@ -154,9 +154,28 @@ dimensions measures the error a CPU-only simulator makes on a modern machine:
 | EASY_BACKFILL | {cpus, gpus, mem} | **1.739** | 278 | 311 | 33.9% |
 
 A CPU-only model sees an empty machine (26% CPU utilization, zero p95 wait); modeling GPUs
-reveals the actual contention — GPUs, not CPUs, are the binding resource on Marconi100.
-PM100 contains only the machine's exclusive-resource jobs, so absolute congestion is
-understated; the cross-model comparison on identical input is the point.
+reveals the actual contention — GPUs, not CPUs, are the binding resource on Marconi100. It also
+overestimates peak facility power 2× (2,296 kW vs 1,125 kW) by co-scheduling GPU jobs that cannot
+actually coexist. PM100 contains only the machine's exclusive-resource jobs, so absolute
+congestion is understated; the cross-model comparison on identical input is the point.
+
+### Energy and power as first-class metrics
+
+Jobs carry measured mean power (watts) into the simulator, which integrates the cluster's power
+profile over time: total energy, peak power, and exposure above a facility cap
+(`--power-cap-watts`). Replaying PM100 on half the machine (a partition under a 700 kW cap)
+exposes the tradeoff energy-aware schedulers actually navigate:
+
+| Policy | p95 BSLD | Energy (MWh) | Peak Power (kW) | Hours Above 700 kW Cap |
+|---|---|---|---|---|
+| FIFO | 5,604.71 | 1,227.8 | 863.0 | 0.04 |
+| EASY_BACKFILL | **152.33** | 1,227.8 | 759.5 | **1.37** |
+
+Energy is schedule-invariant (identical column) — what scheduling changes is *when* power is
+drawn. Backfilling wins p95 BSLD by 37× but sustains draw near the envelope, spending 34× longer
+above the cap; FIFO's instantaneous peak is actually higher, but it spikes briefly instead of
+sustaining. Single-metric energy claims hide exactly this, which is what the constraint contract
+is for.
 
 Reproduce: `python scripts/pm100_multiresource_study.py`
 
