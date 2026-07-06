@@ -111,6 +111,27 @@ def ingest_pm100_cmd(
     typer.echo(f"Rows: {result.row_count}")
 
 
+@ingest_app.command("fdata")
+def ingest_fdata_cmd(
+    input: Path = typer.Option(..., exists=True, readable=True, help="F-DATA monthly parquet (YY_MM.parquet)"),
+    out: Path = typer.Option(Path("data/curated"), help="Output curated dataset directory"),
+    dataset_id: str | None = typer.Option(None, help="Dataset ID override"),
+    report_out: Path = typer.Option(Path("outputs/reports"), help="Report output directory"),
+    batch_size: int = typer.Option(131_072, min=1024, help="Streaming batch size (rows)"),
+) -> None:
+    """Ingest an F-DATA (Fugaku) monthly file: 24M-job dataset, streamed in batches."""
+    from hpcopt.ingest.fdata import ingest_fdata
+
+    ds_id = dataset_id or f"FDATA_{input.stem}"
+    result = ingest_fdata(
+        input_path=input, out_dir=out, dataset_id=ds_id, report_dir=report_out, batch_size=batch_size
+    )
+    typer.echo(f"Dataset: {result.dataset_path}")
+    typer.echo(f"Dataset metadata: {result.dataset_metadata_path}")
+    typer.echo(f"Quality report: {result.quality_report_path}")
+    typer.echo(f"Rows: {result.row_count}")
+
+
 @ingest_app.command("shadow-start")
 def ingest_shadow_start_cmd(
     source_type: str = typer.Option("slurm", help="slurm|pbs"),

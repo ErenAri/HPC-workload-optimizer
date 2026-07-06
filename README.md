@@ -183,6 +183,20 @@ completing. That last claim is exactly the kind of operator what-if the harness 
 
 Reproduce: `python scripts/pm100_multiresource_study.py`
 
+### Scale: F-DATA (Fugaku, 24M jobs)
+
+`hpcopt ingest fdata` streams the [F-DATA](https://doi.org/10.5281/zenodo.11467483) monthly files
+(Supercomputer Fugaku, ~24M jobs over 2021–2024, measured per-job energy) in bounded-memory
+batches — the Sentence-BERT embedding column that dominates each file's bytes is never loaded.
+One month (June 2023: **1,303,631 jobs**, 6.47 GWh measured energy) replays through the Rust
+engine at full Fugaku capacity (158,976 nodes) in **33 s (FIFO) / 55 s (EASY)** on a desktop,
+including trace parsing. Unit forensics are part of the quality report: F-DATA's `econ` is
+watt-hours and `avgpcon` is whole-job watts — the identity `econ × 3600 = avgpcon × duration`
+holds with median ratio 1.0003 across the month, and the ratio ships in the report so the claim
+stays auditable.
+
+Reproduce: `python scripts/fdata_scale_study.py`
+
 ## How HPCOpt Compares to Existing Tools
 
 | Tool | What it is | What HPCOpt adds |
@@ -199,7 +213,7 @@ the evaluation and advisory layer around them.
 
 ### Core Pipeline
 
-- Multi-format ingestion (SWF, Slurm `sacct --parsable2`, PBS/Torque accounting logs, PM100/Marconi100 job-power table with GPU and per-job energy columns) with canonical parquet export and quality reporting.
+- Multi-format ingestion (SWF, Slurm `sacct --parsable2`, PBS/Torque accounting logs, PM100/Marconi100 job-power table with GPU and per-job energy columns, F-DATA/Fugaku monthly files with streamed bounded-memory batches) with canonical parquet export and quality reporting.
 - Reference-suite trace hash locking and enforcement.
 - Trace profiling for heavy-tail, congestion, over-request, and user-skew analysis.
 - Time-safe feature engineering pipeline with chronological cross-validation splits.
