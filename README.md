@@ -138,6 +138,28 @@ cross-validation study — including the BSLD metric-parity defect it uncovered 
 and the fix — is documented in
 [docs/validation/batsim-agreement.md](docs/validation/batsim-agreement.md).
 
+### Multi-resource scheduling on a modern GPU trace (PM100)
+
+The Rust engine schedules on a `{cpus, gpus, mem}` resource vector (CPU-only remains the
+default and is bit-identical to the published numbers above). First modern trace:
+**PM100** ([Marconi100/CINECA, 231K jobs, 88% GPU, measured per-job power](https://doi.org/10.5281/zenodo.10127767)),
+ingested via `hpcopt ingest pm100`. Replaying the same trace with and without the GPU/memory
+dimensions measures the error a CPU-only simulator makes on a modern machine:
+
+| Policy | Resource model | p95 BSLD | Mean Wait (s) | p95 Wait (s) | GPU Util |
+|---|---|---|---|---|---|
+| FIFO | CPU-only | 1.000 | 179 | 0 | — |
+| FIFO | {cpus, gpus, mem} | **2.145** | 380 | 467 | 33.9% |
+| EASY_BACKFILL | CPU-only | 1.000 | 151 | 0 | — |
+| EASY_BACKFILL | {cpus, gpus, mem} | **1.739** | 278 | 311 | 33.9% |
+
+A CPU-only model sees an empty machine (26% CPU utilization, zero p95 wait); modeling GPUs
+reveals the actual contention — GPUs, not CPUs, are the binding resource on Marconi100.
+PM100 contains only the machine's exclusive-resource jobs, so absolute congestion is
+understated; the cross-model comparison on identical input is the point.
+
+Reproduce: `python scripts/pm100_multiresource_study.py`
+
 ## How HPCOpt Compares to Existing Tools
 
 | Tool | What it is | What HPCOpt adds |
@@ -154,7 +176,7 @@ the evaluation and advisory layer around them.
 
 ### Core Pipeline
 
-- Multi-format ingestion (SWF, Slurm `sacct --parsable2`, PBS/Torque accounting logs) with canonical parquet export and quality reporting.
+- Multi-format ingestion (SWF, Slurm `sacct --parsable2`, PBS/Torque accounting logs, PM100/Marconi100 job-power table with GPU and per-job energy columns) with canonical parquet export and quality reporting.
 - Reference-suite trace hash locking and enforcement.
 - Trace profiling for heavy-tail, congestion, over-request, and user-skew analysis.
 - Time-safe feature engineering pipeline with chronological cross-validation splits.

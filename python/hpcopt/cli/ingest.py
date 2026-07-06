@@ -93,6 +93,24 @@ def ingest_pbs_cmd(
     typer.echo(f"Rows: {result.row_count}")
 
 
+@ingest_app.command("pm100")
+def ingest_pm100_cmd(
+    input: Path = typer.Option(..., exists=True, readable=True, help="PM100 job_table.parquet path"),
+    out: Path = typer.Option(Path("data/curated"), help="Output curated dataset directory"),
+    dataset_id: str | None = typer.Option(None, help="Dataset ID override"),
+    report_out: Path = typer.Option(Path("outputs/reports"), help="Report output directory"),
+) -> None:
+    """Ingest the PM100 (Marconi100) job table: GPU requests + measured power."""
+    from hpcopt.ingest.pm100 import ingest_pm100
+
+    ds_id = dataset_id or "PM100"
+    result = ingest_pm100(input_path=input, out_dir=out, dataset_id=ds_id, report_dir=report_out)
+    typer.echo(f"Dataset: {result.dataset_path}")
+    typer.echo(f"Dataset metadata: {result.dataset_metadata_path}")
+    typer.echo(f"Quality report: {result.quality_report_path}")
+    typer.echo(f"Rows: {result.row_count}")
+
+
 @ingest_app.command("shadow-start")
 def ingest_shadow_start_cmd(
     source_type: str = typer.Option("slurm", help="slurm|pbs"),
