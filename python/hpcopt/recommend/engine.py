@@ -20,8 +20,13 @@ def _load_json(path: Path) -> dict[str, Any]:
     return payload
 
 
-def _is_dominated(point: list[float], other: list[float]) -> bool:
-    """Check if `point` is dominated by `other` (all objectives to maximize)."""
+def is_dominated(point: list[float], other: list[float]) -> bool:
+    """Check if `point` is dominated by `other` (all objectives to maximize).
+
+    Public: benchmark studies (e.g. scripts/pm100_cap_pareto.py) reuse this
+    dominance test so every Pareto frontier in the project shares one
+    definition.
+    """
     at_least_one_better = False
     for p, o in zip(point, other):
         if o < p:
@@ -83,7 +88,7 @@ def generate_pareto_recommendation(
             if i == j or dominated[j]:
                 continue
             point_j = [candidates[j]["pareto_objectives"].get(o, 0) for o in objectives]
-            if _is_dominated(point_i, point_j):
+            if is_dominated(point_i, point_j):
                 dominated[i] = True
                 break
 

@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **F-DATA (Fugaku) ingestion** (`hpcopt ingest fdata`), streamed with bounded memory; a 1.3M-job
   month simulates in 33 s (FIFO) / 55 s (EASY) at full 158,976-node capacity.
 - **RL_TRAINED policy** (MaskablePPO, RLScheduler SC'20 protocol) evaluated across the matrix.
+- **Power-cap Pareto sweep** (`scripts/pm100_cap_pareto.py`): enforced-cap sweep on half
+  Marconi100 finds the knee (600 kW, 21% below natural peak, +0.1% p95 BSLD), a non-monotonic
+  cap→BSLD frontier (Pareto-marked via the recommendation engine's dominance test, now public
+  `is_dominated`), and the infeasible-cap contrast — EASY strands 2 jobs, FIFO head-blocks and
+  strands 70% of the trace.
 - **`hpcopt whatif` command group** (operator mode): evaluate a scheduler policy or capacity
   change directly from a raw `sacct --parsable2` dump (or canonical parquet) in seconds. Baseline
   replay is graded by the fidelity gate and every verdict carries that confidence; KPI deltas that

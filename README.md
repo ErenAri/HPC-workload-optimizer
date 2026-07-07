@@ -220,6 +220,38 @@ completing. That last claim is exactly the kind of operator what-if the harness 
 
 Reproduce: `python scripts/pm100_multiresource_study.py`
 
+#### How low can the cap go? (Pareto sweep)
+
+"The cap is free at 700 kW" invites the operator's real question: *what is the lowest cap that
+stays free, and what does going lower cost?* Sweeping the enforced cap from 700 kW down to the
+feasibility floor (the largest single job draws 313.3 kW summed over its nodes — no cap below
+that can ever start it):
+
+| Enforced cap (EASY) | p95 BSLD | vs uncapped 152.33 |
+|---|---|---|
+| 600 kW (**the knee**) | 152.49 | +0.1% |
+| 550 kW | 154.47 | +1.4% |
+| 500 kW | 188.65 | +23.8% |
+| 400 kW | 299.75 | +96.8% |
+| 315 kW (floor + 0.5%) | 1,029.32 | +575.7% |
+
+Findings the sweep pins down (full tables incl. FIFO in
+`outputs/benchmark/pm100_cap_pareto.md`):
+
+- **A 600 kW cap — 21% below the workload's natural 759.5 kW peak — is still free** (+0.1% p95
+  BSLD). Degradation below the knee is smooth, not a cliff: an operator can price every 50 kW
+  of headroom in schedule quality.
+- **The cap→BSLD frontier is not monotonic**: 340 kW beats 350 kW (599 vs 658) because dispatch
+  under a tight cap is chaotic. The study marks Pareto-efficient caps with the same dominance
+  test the recommendation engine uses — 350 kW is dominated (a lower cap gives better service).
+- **Below the feasibility floor, the failure mode is policy-dependent and dramatic**: EASY
+  strands exactly the 2 jobs that can never fit under a 300 kW cap and completes the other
+  231,236; strict FIFO head-blocks behind the first impossible job and strands **162,537 jobs
+  (70%)**. If a facility must run capped below its largest job's draw, backfill is not an
+  optimization but a survival requirement.
+
+Reproduce: `python scripts/pm100_cap_pareto.py`
+
 ### Scale: F-DATA (Fugaku, 24M jobs)
 
 `hpcopt ingest fdata` streams the [F-DATA](https://doi.org/10.5281/zenodo.11467483) monthly files

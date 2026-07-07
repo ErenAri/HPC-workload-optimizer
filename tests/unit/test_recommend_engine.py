@@ -10,9 +10,9 @@ from hpcopt.recommend.engine import (
     RecommendationResult,
     _extract_objective,
     _fidelity_gate_ok,
-    _is_dominated,
     generate_pareto_recommendation,
     generate_recommendation_report,
+    is_dominated,
     workload_regime_analysis,
 )
 
@@ -37,9 +37,9 @@ def _make_sim_report(
 
 
 def test_is_dominated() -> None:
-    assert _is_dominated([1, 1], [2, 2]) is True
-    assert _is_dominated([2, 2], [1, 1]) is False
-    assert _is_dominated([1, 2], [2, 1]) is False
+    assert is_dominated([1, 1], [2, 2]) is True
+    assert is_dominated([2, 2], [1, 1]) is False
+    assert is_dominated([1, 2], [2, 1]) is False
 
 
 def test_extract_objective_valid() -> None:
