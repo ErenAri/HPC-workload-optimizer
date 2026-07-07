@@ -406,7 +406,7 @@ fn dispatch_easy_backfill(
     for s in &started {
         ends.push((s.end_ts, s.requested, s.power_mean_watts));
     }
-    ends.sort_by(|a, b| a.0.cmp(&b.0));
+    ends.sort_by_key(|e| e.0);
 
     let mut cumulative_free = *free;
     let mut cumulative_headroom = *headroom_watts;

@@ -28,7 +28,7 @@ dependencies = [
   "typer>=0.12.3,<1.0",
   "pydantic>=2.8.2,<3.0",
   "pandas>=2.2.2,<3.0",
-  "pyarrow>=16.1.0,<18.0",
+  "pyarrow>=23.0.1,<24.0",
   "pyyaml>=6.0.1,<7.0",
   "fastapi>=0.112.0,<1.0",
   "uvicorn>=0.30.0,<1.0",
@@ -45,8 +45,8 @@ Changelog = "https://github.com/ErenAri/HPC-workload-optimizer/blob/main/CHANGEL
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=8.3.2,<9.0",
-  "pytest-cov>=5.0.0,<6.0",
+  "pytest>=9.0.3,<10.0",
+  "pytest-cov>=7.0.0,<8.0",
   "hypothesis>=6.100,<7.0",
   "ruff>=0.6.0",
   "mypy>=1.11.0",
@@ -115,6 +115,9 @@ filterwarnings = [
   # Later entries take precedence over "error" above (pytest applies filters
   # bottom-up). setuptools >= 81 re-categorized this from UserWarning.
   "ignore:pkg_resources is deprecated as an API.*:DeprecationWarning",
+  # starlette >= 0.52 warns at import inside fastapi.testclient; not actionable
+  # until fastapi migrates its TestClient off httpx.
+  "ignore:Using `httpx` with `starlette.testclient` is deprecated",
 ]
 
 [tool.bandit]
@@ -128,7 +131,9 @@ line-length = 120
 select = ["E", "F", "W", "I"]
 
 [tool.mypy]
-python_version = "3.11"
+# Checked as 3.12: numpy >= 2.4 ships `type` statements in its stubs, which
+# mypy rejects under a 3.11 target even though the runtime supports 3.11.
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true

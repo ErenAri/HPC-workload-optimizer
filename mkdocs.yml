@@ -63,6 +63,9 @@ nav:
     - Live Integration: tutorials/live-integration.md
   - Validation:
     - Batsim Cross-Validation: validation/batsim-agreement.md
+  - Extending:
+    - Policy Plug-in API: plugin-api.md
+    - Policy Leaderboard: leaderboard.md
   - Operations:
     - Deployment Guide: tutorials/deployment.md
     - Production Readiness: production-readiness-checklist.md
