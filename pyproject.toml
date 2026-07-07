@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hpc-workload-optimizer"
-version = "2.3.0"
+version = "2.4.0"
 description = "Systems-first HPC workload optimizer: runtime prediction, scheduling simulation, and policy recommendation."
 readme = "README.md"
 requires-python = ">=3.11"

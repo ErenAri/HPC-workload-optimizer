@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-07-08
+
 ### Added
 - **Public policy plug-in API** (`hpcopt.plugins`): frozen chooser contract
   (`SchedulerStateSnapshot -> SchedulerDecision`), `@register_policy` decorator, pip-package
@@ -155,18 +157,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Model: 42.3% MAE improvement vs global mean on CTC-SP2 (77K jobs)
 - Prediction interval coverage: 78.1% (p10-p90)
 
-## [Unreleased]
-
-### Planned
+### Planned (as written at the 2.3.0 release — all four have since shipped)
 - Rust simulation engine (10-50x speedup)
 - LightGBM / XGBoost model backends
 - Reinforcement learning policy search
 - Slurm live adapter
 
+[2.4.0]: https://github.com/ErenAri/HPC-workload-optimizer/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/ErenAri/HPC-workload-optimizer/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/ErenAri/HPC-workload-optimizer/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/ErenAri/HPC-workload-optimizer/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/ErenAri/HPC-workload-optimizer/compare/v1.2.0...v2.0.0
 [1.2.0]: https://github.com/ErenAri/HPC-workload-optimizer/compare/v1.0.0...v1.2.0
 [1.0.0]: https://github.com/ErenAri/HPC-workload-optimizer/releases/tag/v1.0.0
-[Unreleased]: https://github.com/ErenAri/HPC-workload-optimizer/compare/v2.3.0...HEAD
+[Unreleased]: https://github.com/ErenAri/HPC-workload-optimizer/compare/v2.4.0...HEAD

@@ -1,8 +1,8 @@
 metadata:
-  release_target: "v2.0.0"
-  reviewed_at_utc: "2026-02-28T12:00:00Z"
+  release_target: "v2.4.0"
+  reviewed_at_utc: "2026-07-08T00:00:00Z"
   owner: "platform-team"
-  notes: "Checklist-driven release readiness for Kubernetes startup-baseline deployment."
+  notes: "Checklist-driven release readiness. Re-reviewed for v2.4.0: all evidence paths verified present; GitHub Actions re-enabled after being disabled since Feb 2026."
 
 checks:
   - id: correctness_gates
