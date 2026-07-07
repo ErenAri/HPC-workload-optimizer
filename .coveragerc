@@ -3,6 +3,10 @@ source = python/hpcopt
 omit =
     python/hpcopt/__pycache__/*
     python/hpcopt/*/__pycache__/*
+    # torch-only modules: exercised by scripts/train_rl_policy.py on GPU
+    # machines; CI installs gymnasium but not torch/sb3 (the [rl] extra).
+    python/hpcopt/rl/features.py
+    python/hpcopt/rl/train.py
 
 [report]
 exclude_lines =

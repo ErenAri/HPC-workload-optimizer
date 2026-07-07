@@ -136,7 +136,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        # gymnasium (small, pure-Python) lets the RL env tests run without
+        # pulling the full [rl] extra (torch/sb3 are ~2.5 GB and GPU-oriented).
+        run: pip install -e ".[dev]" "gymnasium>=0.29.0,<2.0"
       - name: Run tests with coverage
         run: pytest tests/ -v --cov=hpcopt --cov-report=term-missing --cov-report=xml:coverage.xml --cov-fail-under=86
       - name: Build quality evidence bundle

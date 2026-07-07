@@ -225,3 +225,85 @@ def test_earliest_start_for_accumulates_in_end_time_order() -> None:
     assert earliest_start_for(snapshot, 6) == 51  # after the earlier end
     assert earliest_start_for(snapshot, 8) == 100  # needs both to finish
     assert earliest_start_for(snapshot, 11) == NEVER_TS  # exceeds capacity
+
+
+# ── entry-point discovery paths ──────────────────────────────────────
+
+
+def _fake_entry_point(name: str, value: str, loaded):
+    class _EP:
+        def __init__(self):
+            self.name = name
+            self.value = value
+
+        def load(self):
+            if isinstance(loaded, Exception):
+                raise loaded
+            return loaded
+
+    return _EP()
+
+
+def _rediscover_with(monkeypatch, entry_points_list):
+    """Force a fresh ensure_discovered() pass against fake entry points."""
+    monkeypatch.setattr(plugins, "_discovered", False)
+    monkeypatch.setattr(
+        plugins.importlib_metadata,
+        "entry_points",
+        lambda group: entry_points_list,
+    )
+    plugins.ensure_discovered()
+
+
+def test_discovery_registers_callable_entry_point(monkeypatch, scratch_registry) -> None:
+    def chooser(snapshot):  # pragma: no cover - never invoked
+        raise NotImplementedError
+
+    _rediscover_with(monkeypatch, [_fake_entry_point("TEST_EP_POLICY", "pkg.mod:fn", chooser)])
+    scratch_registry.append("TEST_EP_POLICY")
+    monkeypatch.setattr(plugins, "_discovered", True)
+
+    spec = plugins.get_policy("TEST_EP_POLICY")
+    assert spec is not None
+    assert spec.source == "entry_point:pkg.mod:fn"
+    # Second pass with the same callable is a no-op, not a conflict.
+    _rediscover_with(monkeypatch, [_fake_entry_point("TEST_EP_POLICY", "pkg.mod:fn", chooser)])
+    monkeypatch.setattr(plugins, "_discovered", True)
+
+
+def test_discovery_skips_broken_and_conflicting_entry_points(monkeypatch, caplog) -> None:
+    import logging
+
+    broken = _fake_entry_point("TEST_BROKEN", "bad.mod", ImportError("boom"))
+    # Shadowing a built-in id via entry point is rejected, not fatal.
+    shadow = _fake_entry_point("EASY_BACKFILL_BASELINE", "evil.mod:fn", lambda s: None)
+    with caplog.at_level(logging.WARNING, logger="hpcopt.plugins"):
+        _rediscover_with(monkeypatch, [broken, shadow])
+    monkeypatch.setattr(plugins, "_discovered", True)
+
+    assert not plugins.is_registered("TEST_BROKEN")
+    assert "TEST_BROKEN" in caplog.text
+    assert "EASY_BACKFILL_BASELINE" in caplog.text
+    # The built-in is untouched.
+    from hpcopt.simulate.core import SUPPORTED_POLICIES
+
+    assert "EASY_BACKFILL_BASELINE" in SUPPORTED_POLICIES
+
+
+def test_uarp_follow_dispatch_skips_oversized_tail() -> None:
+    # Head fits; first tail job is too wide, later short job still packs.
+    snapshot = SchedulerStateSnapshot(
+        clock_ts=0,
+        capacity_cpus=10,
+        free_cpus=10,
+        queued_jobs=(
+            _queued(1, 0, 4, 30, guard=30),
+            _queued(2, 1, 9, 80, guard=80),
+            _queued(3, 2, 3, 20, guard=20),
+        ),
+        running_jobs=tuple(),
+    )
+    uarp = choose_uarp_backfill(snapshot)
+    assert [d.job_id for d in uarp.decisions] == [1, 3]
+    assert uarp.decisions[0].reason == "uarp_head_dispatch"
+    assert uarp.decisions[1].reason == "uarp_follow_dispatch"

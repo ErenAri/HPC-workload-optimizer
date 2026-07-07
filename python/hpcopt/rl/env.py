@@ -98,7 +98,7 @@ def _encode_jobs(
 class RLSchedulerEnv(gym.Env):
     """Gymnasium env exposing the RLScheduler-style scheduling MDP."""
 
-    metadata = {"render_modes": []}
+    metadata: dict[str, list[str]] = {"render_modes": []}
 
     def __init__(
         self,

@@ -42,3 +42,44 @@ def test_rl_trained_falls_back_to_fifo_without_policy():
     )
     assert len(result.jobs_df) == len(trace)
     assert result.invariant_report["violations"] == []
+
+
+def test_choose_rl_trained_dispatch_loop_with_stub_policy() -> None:
+    """The RL dispatch loop re-encodes state after each pick, honors the
+    fit mask, and stops when the model points at a masked slot."""
+    from hpcopt.rl.inference import choose_rl_trained
+    from hpcopt.simulate.adapter import AdapterQueuedJob, SchedulerStateSnapshot
+
+    def queued(job_id: int, cpus: int) -> AdapterQueuedJob:
+        return AdapterQueuedJob(
+            job_id=job_id,
+            submit_ts=job_id,
+            requested_cpus=cpus,
+            runtime_estimate_sec=100,
+            runtime_p90_sec=100,
+            runtime_guard_sec=100,
+            estimate_source="test",
+        )
+
+    snapshot = SchedulerStateSnapshot(
+        clock_ts=0,
+        capacity_cpus=8,
+        free_cpus=8,
+        queued_jobs=(queued(1, 4), queued(2, 4), queued(3, 4)),
+        running_jobs=tuple(),
+    )
+
+    class StubPolicy:
+        """Always picks the first still-dispatchable queue slot."""
+
+        def predict_action(self, obs, action_masks):
+            import numpy as np
+
+            return int(np.argmax(action_masks))
+
+    decision = choose_rl_trained(snapshot, StubPolicy())
+    # Two 4-cpu jobs fit in 8 cpus; the third no longer fits, mask goes
+    # empty, and the loop stops.
+    assert [d.job_id for d in decision.decisions] == [1, 2]
+    assert all(d.reason == "rl_trained_pick" for d in decision.decisions)
+    assert decision.policy_id == "RL_TRAINED"
