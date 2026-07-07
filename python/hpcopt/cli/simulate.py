@@ -58,7 +58,12 @@ def simulate_run_cmd(
     ),
 ) -> None:
     if policy not in SUPPORTED_POLICIES:
-        raise typer.BadParameter(f"Unsupported policy '{policy}'. Supported: {sorted(SUPPORTED_POLICIES)}")
+        from hpcopt import plugins
+
+        if not plugins.is_registered(policy):
+            raise typer.BadParameter(
+                f"Unsupported policy '{policy}'. Available: {list(plugins.all_policy_ids())}"
+            )
     ensure_dir(out)
     ensure_dir(report_out)
     resolved_run_id = run_id or f"sim_{policy.lower()}_{dt.datetime.now(tz=dt.UTC).strftime('%Y%m%d_%H%M%S')}"

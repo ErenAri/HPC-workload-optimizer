@@ -52,35 +52,38 @@ Results are published win or lose — the harness exists to prevent cherry-picki
 | Trace | Policy | p95 BSLD | CPU Util | Mean Wait (s) | p95 Wait (s) |
 |---|---|---|---|---|---|
 | SDSC-SP2 | FIFO_STRICT | 56,784.93 | 76.8% | 1,552,128 | 5,103,921 |
-| SDSC-SP2 | EASY_BACKFILL_BASELINE | 627.93 | 83.3% | 35,656 | 200,829 |
+| SDSC-SP2 | EASY_BACKFILL_BASELINE | 585.27 | 83.3% | 34,010 | 176,154 |
 | SDSC-SP2 | CONSERVATIVE_BACKFILL_BASELINE | 550.82 | 83.4% | 28,708 | 133,802 |
-| SDSC-SP2 | **SJF_BACKFILL** | **148.97** | 79.9% | 68,018 | 62,151 |
-| SDSC-SP2 | LJF_BACKFILL | 457.76 | 83.2% | 87,073 | 134,968 |
-| SDSC-SP2 | FAIRSHARE_BACKFILL | 158.53 | 80.0% | 97,688 | 52,708 |
-| SDSC-SP2 | EASY_BACKFILL_TSAFRIR | 358.13 | 83.4% | 21,059 | 115,221 |
-| SDSC-SP2 | ML_BACKFILL_P50 | 452.98 | 83.4% | 23,911 | 120,686 |
-| SDSC-SP2 | ML_BACKFILL_P10 | 364.08 | 83.4% | 18,141 | 93,645 |
+| SDSC-SP2 | **SJF_BACKFILL** | **144.14** | 80.1% | 61,673 | 57,386 |
+| SDSC-SP2 | LJF_BACKFILL | 466.27 | 83.3% | 78,385 | 170,704 |
+| SDSC-SP2 | FAIRSHARE_BACKFILL | 144.44 | 80.3% | 86,269 | 56,731 |
+| SDSC-SP2 | EASY_BACKFILL_TSAFRIR | 355.67 | 83.4% | 19,681 | 103,340 |
+| SDSC-SP2 | ML_BACKFILL_P50 | 427.30 | 83.4% | 24,123 | 118,451 |
+| SDSC-SP2 | ML_BACKFILL_P10 | 374.57 | 83.4% | 17,900 | 91,946 |
 | SDSC-SP2 | RL_TRAINED ² | 271.83 | 83.3% | 31,226 | 80,535 |
+| SDSC-SP2 | UARP_BACKFILL ³ | 631.45 | 82.7% | 58,291 | 434,876 |
 | CTC-SP2 | FIFO_STRICT | 188.05 | 55.5% | 6,183 | 34,361 |
-| CTC-SP2 | EASY_BACKFILL_BASELINE | 9.93 | 55.5% | 2,070 | 14,087 |
+| CTC-SP2 | EASY_BACKFILL_BASELINE | 18.24 | 55.5% | 2,466 | 16,676 |
 | CTC-SP2 | CONSERVATIVE_BACKFILL_BASELINE | 20.89 | 55.5% | 2,270 | 15,824 |
-| CTC-SP2 | SJF_BACKFILL | 4.11 | 55.5% | 864 | 4,174 |
-| CTC-SP2 | LJF_BACKFILL | 7.25 | 55.5% | 1,636 | 10,033 |
-| CTC-SP2 | **FAIRSHARE_BACKFILL** | **3.59** | 55.5% | 801 | 3,175 |
-| CTC-SP2 | EASY_BACKFILL_TSAFRIR | 6.28 | 55.5% | 1,454 | 9,132 |
-| CTC-SP2 | ML_BACKFILL_P50 | 9.11 | 55.5% | 1,831 | 12,801 |
-| CTC-SP2 | ML_BACKFILL_P10 | 6.61 | 55.5% | 986 | 5,719 |
-| CTC-SP2 | RL_TRAINED ² | 3.85 | 55.5% | 714 | 2,750 |
+| CTC-SP2 | SJF_BACKFILL | 4.46 | 55.5% | 868 | 4,293 |
+| CTC-SP2 | LJF_BACKFILL | 13.22 | 55.5% | 1,907 | 11,511 |
+| CTC-SP2 | FAIRSHARE_BACKFILL | 4.15 | 55.5% | 834 | 3,456 |
+| CTC-SP2 | EASY_BACKFILL_TSAFRIR | 8.74 | 55.5% | 1,666 | 11,389 |
+| CTC-SP2 | ML_BACKFILL_P50 | 15.38 | 55.5% | 2,150 | 14,742 |
+| CTC-SP2 | ML_BACKFILL_P10 | 10.03 | 55.5% | 1,411 | 9,195 |
+| CTC-SP2 | **RL_TRAINED ²** | **3.85** | 55.5% | 714 | 2,750 |
+| CTC-SP2 | UARP_BACKFILL ³ | 12.90 | 55.5% | 2,253 | 15,070 |
 | HPC2N | FIFO_STRICT | 286.98 | 59.6% | 16,189 | 68,219 |
-| HPC2N | EASY_BACKFILL_BASELINE | 85.85 | 59.6% | 10,252 | 40,367 |
+| HPC2N | EASY_BACKFILL_BASELINE | 113.40 | 59.6% | 12,369 | 52,246 |
 | HPC2N | CONSERVATIVE_BACKFILL_BASELINE | — ¹ | — | — | — |
-| HPC2N | SJF_BACKFILL | 21.27 | 59.6% | 6,936 | 26,642 |
-| HPC2N | LJF_BACKFILL | 46.32 | 59.6% | 10,169 | 40,374 |
-| HPC2N | **FAIRSHARE_BACKFILL** | **19.14** | 59.6% | 7,465 | 25,854 |
-| HPC2N | EASY_BACKFILL_TSAFRIR | 48.04 | 59.6% | 9,308 | 36,460 |
-| HPC2N | ML_BACKFILL_P50 | 74.35 | 59.6% | 10,138 | 39,628 |
-| HPC2N | ML_BACKFILL_P10 | 62.63 | 59.6% | 9,755 | 36,791 |
+| HPC2N | SJF_BACKFILL | 20.46 | 59.6% | 7,148 | 27,472 |
+| HPC2N | LJF_BACKFILL | 83.65 | 59.6% | 13,630 | 66,532 |
+| HPC2N | **FAIRSHARE_BACKFILL** | **17.82** | 59.6% | 7,900 | 28,985 |
+| HPC2N | EASY_BACKFILL_TSAFRIR | 56.01 | 59.6% | 10,748 | 45,683 |
+| HPC2N | ML_BACKFILL_P50 | 130.88 | 59.6% | 12,373 | 51,847 |
+| HPC2N | ML_BACKFILL_P10 | 114.61 | 59.6% | 11,488 | 48,837 |
 | HPC2N | RL_TRAINED ² | 31.09 | 59.6% | 8,885 | 30,708 |
+| HPC2N | UARP_BACKFILL ³ | 79.79 | 59.6% | 11,039 | 45,825 |
 
 ¹ Not run: conservative backfill's full-queue reservations are computationally prohibitive on
 HPC2N (~202K jobs; >3.4 h of simulation without completing). Its results on the other two traces
@@ -90,30 +93,64 @@ show it is not a front-runner. The sweep is resumable, so the cell can be filled
 hyperparameters, trained on random windows of the *same* trace it is evaluated on
 (in-distribution, per the RLScheduler protocol). Cross-trace generalization is untested.
 
+³ Plug-in policy (`hpcopt.plugins.uarp`), registered through the public plug-in API
+([docs/plugin-api.md](docs/plugin-api.md)) and evaluated by the same harness as the built-ins:
+EASY skeleton with pessimistic guard-gated backfill, packed shortest-guard-first.
+
 <!-- POLICY_MATRIX:END -->
 
 **What the matrix says** (bold = best p95 BSLD per trace; zero invariant violations in all runs):
 
 - **ML runtime prediction does not beat Tsafrir's 2007 heuristic.** On both congested traces the
-  simple doubling-of-user-history estimate matches or beats LightGBM quantile prediction for
-  EASY backfill: SDSC-SP2 358.13 vs 364.08 (ML p10), HPC2N 48.04 vs 62.63. This is the harness
-  reporting honestly against its own ML feature — and it mirrors the field's open question of
-  whether better runtime prediction actually translates into better schedules.
+  simple doubling-of-user-history estimate beats LightGBM quantile prediction for EASY backfill:
+  SDSC-SP2 355.67 vs 374.57 (ML p10), HPC2N 56.01 vs 114.61. This is the harness reporting
+  honestly against its own ML feature — and it mirrors the field's open question of whether
+  better runtime prediction actually translates into better schedules.
 - **Queue ordering dominates runtime prediction.** Plain SJF and fair-share ordering beat every
   prediction-based EASY variant on all three traces.
 - **p95 BSLD trades against utilization and mean wait.** SJF wins p95 BSLD on SDSC-SP2 but idles
-  more of the machine (79.9% vs 83.4%) and triples mean wait vs Tsafrir — single-metric
+  more of the machine (80.1% vs 83.4%) and triples mean wait vs Tsafrir — single-metric
   leaderboards mislead, which is why `hpcopt` gates verdicts on a constraint contract instead.
-- **RL beats every prediction-based policy, but not simple queue ordering.** The MaskablePPO
-  agent beats Tsafrir, ML backfill, and EASY on all three traces (and edges out SJF on CTC-SP2:
-  3.85 vs 4.11) while holding EASY-class utilization — yet plain FAIRSHARE still wins two of
-  three traces at zero training cost. Caveats in footnote ²: single seed, evaluated
-  in-distribution on the training trace.
+- **RL wins a trace outright.** The MaskablePPO agent beats Tsafrir, ML backfill, and EASY on all
+  three traces while holding EASY-class utilization, and on CTC-SP2 it is the overall winner
+  (3.85 vs FAIRSHARE 4.15, SJF 4.46). FAIRSHARE still wins HPC2N and SJF wins SDSC-SP2 at zero
+  training cost. Caveats in footnote ²: single seed, evaluated in-distribution on the training
+  trace.
+- **The bundled UARP plug-in beats baseline EASY on two of three traces — and loses the third.**
+  Shortest-guard-first backfill packing wins CTC-SP2 (12.90 vs 18.24) and HPC2N (79.79 vs 113.40)
+  at equal utilization, but on pathologically congested SDSC-SP2 it loses (631.45 vs 585.27) and
+  nearly doubles the starvation rate (9.8% vs 5.2%): favoring short jobs starves the wide ones.
+  Plug-in policies (footnote ³) are scored by the same referee as built-ins — wins and losses
+  both get published.
+
+These numbers were regenerated in July 2026 after cross-engine review caught a reservation-order
+defect in the Python engine's EASY-family shadow-time computation (commit `6cd0101`; see
+[docs/validation/batsim-agreement.md](docs/validation/batsim-agreement.md)). The defect had
+flattered backfill-heavy policies on CTC-SP2/HPC2N by up to 83% of p95 BSLD — corrected EASY
+respects the head-of-line reservation strictly.
 
 `RL_TRAINED` requires the `[rl]` extras; reproduce the checkpoints with
 `scripts/train_rl_policy.py` (~20 min per trace on an RTX 2060).
 
 Reproduce: `python scripts/policy_matrix.py`
+
+### Bring your own policy: the plug-in API and leaderboard
+
+The chooser contract the matrix is built on is a **frozen public API**
+([docs/plugin-api.md](docs/plugin-api.md)): a policy is a pure function
+`SchedulerStateSnapshot -> SchedulerDecision`, registered with a decorator or shipped as a pip
+package via the `hpcopt.policies` entry-point group. Registered policies work everywhere
+built-ins do — `hpcopt simulate run --policy MY_POLICY`, the policy matrix, the what-if CLI —
+and are scored by the same referee, which they cannot influence.
+
+The bundled reference plugin `UARP_BACKFILL` (`hpcopt.plugins.uarp`) is written entirely against
+the public API and discovered through this repo's own entry point: an EASY skeleton whose
+backfill gate uses the *pessimistic* guard runtime (p90/guard quantile when a predictor is
+active) and packs candidates shortest-guard-first (EASY-SJBF).
+
+Every evaluated policy — built-in or plug-in — is ranked per trace in
+[docs/leaderboard.md](docs/leaderboard.md), regenerated from the matrix JSON with
+`python scripts/build_leaderboard.py`.
 
 ### FIFO vs EASY (Rust engine)
 
@@ -224,6 +261,7 @@ the evaluation and advisory layer around them.
 ### Simulation and Evaluation
 
 - Deterministic simulation core for ten policies: `FIFO_STRICT`, `EASY_BACKFILL_BASELINE`, `CONSERVATIVE_BACKFILL_BASELINE` (Mu'alem & Feitelson TPDS 2001 — reservations for *all* queued jobs, on a free-CPU availability profile), `EASY_BACKFILL_TSAFRIR` (Tsafrir/Etsion/Feitelson 2007 user-history predictor), `SJF_BACKFILL`, `LJF_BACKFILL`, `FAIRSHARE_BACKFILL` (decayed-usage Slurm-style multifactor priority), `ML_BACKFILL_P50`, `ML_BACKFILL_P10`, and `RL_TRAINED` (MaskablePPO agent trained via the RLScheduler-style env in `python/hpcopt/rl/`; install `[rl]` extras to train).
+- Public policy plug-in API (`hpcopt.plugins`): frozen chooser contract, decorator registration, pip-package discovery via the `hpcopt.policies` entry-point group, bundled `UARP_BACKFILL` reference plugin, and a generated per-trace leaderboard ([docs/leaderboard.md](docs/leaderboard.md)).
 - Invariant reporting with strict-fail mode.
 - Baseline fidelity gate (aggregate + distribution + queue-correlation checks).
 - Stress scenario generation (heavy-tail, low-congestion, user-skew, burst-shock) and automated stress testing.

@@ -81,6 +81,13 @@ rl = [
 [project.scripts]
 hpcopt = "hpcopt.cli.main:run"
 
+# Third-party scheduling policies register here: point an entry at a module
+# that calls hpcopt.plugins.register_policy at import time (or directly at a
+# decorated chooser). The bundled UARP plugin doubles as the packaging
+# reference. See docs/plugin-api.md.
+[project.entry-points."hpcopt.policies"]
+UARP_BACKFILL = "hpcopt.plugins.uarp"
+
 [tool.setuptools]
 include-package-data = true
 
@@ -105,6 +112,9 @@ filterwarnings = [
   "ignore:pkg_resources is deprecated as an API.*:UserWarning",
   "ignore:module 'sre_constants' is deprecated:DeprecationWarning",
   "error",
+  # Later entries take precedence over "error" above (pytest applies filters
+  # bottom-up). setuptools >= 81 re-categorized this from UserWarning.
+  "ignore:pkg_resources is deprecated as an API.*:DeprecationWarning",
 ]
 
 [tool.bandit]

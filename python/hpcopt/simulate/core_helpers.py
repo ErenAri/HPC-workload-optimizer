@@ -103,6 +103,14 @@ def choose_decisions(
             snapshot=snapshot,
             strict_uncertainty_mode=strict_uncertainty_mode,
         )
+    # Registered plug-in policies (hpcopt.plugins) get the same snapshot the
+    # built-ins do; lazy import keeps plugin discovery off the hot path for
+    # built-in-only runs.
+    from hpcopt import plugins
+
+    spec = plugins.get_policy(policy_id)
+    if spec is not None:
+        return spec.chooser(snapshot)
     raise ValueError(f"Unsupported policy_id '{policy_id}'")
 
 

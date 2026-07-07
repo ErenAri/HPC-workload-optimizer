@@ -101,10 +101,11 @@ def run_whatif(
     fidelity_config_path: Path | None = None,
     starvation_wait_cap_sec: int = 172800,
 ) -> WhatIfResult:
-    if baseline_policy not in SUPPORTED_POLICIES:
-        raise ValueError(f"Unsupported baseline policy: {baseline_policy}")
-    if candidate_policy not in SUPPORTED_POLICIES:
-        raise ValueError(f"Unsupported candidate policy: {candidate_policy}")
+    from hpcopt import plugins
+
+    for role, policy in (("baseline", baseline_policy), ("candidate", candidate_policy)):
+        if policy not in SUPPORTED_POLICIES and not plugins.is_registered(policy):
+            raise ValueError(f"Unsupported {role} policy: {policy}")
 
     ensure_dir(out_dir)
     resolved_run_id = run_id or f"whatif_{dt.datetime.now(tz=dt.UTC).strftime('%Y%m%d_%H%M%S')}"

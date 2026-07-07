@@ -72,6 +72,16 @@ formulas — this is exactly the class of silent error that external cross-valid
 catch, and why HPCOpt treats "validated against Batsim" as a standing claim to maintain, not a
 one-time exercise.
 
+**Second defect caught by the same discipline (July 2026).** While freezing the public plug-in
+API, a Rust-vs-Python semantic diff of the EASY shadow-time computation revealed that the Python
+reference engine walked running jobs in *dispatch* order rather than end-time order when
+computing head-of-line reservations (the adapter contract requires `(end_ts, job_id)` order;
+`core.py` bypassed the sorted constructor). Wrong reservations could block legitimate backfills.
+FIFO — everything cross-validated above — is unaffected (it never computes reservations), as are
+CONSERVATIVE (sorts internally) and RL (does not consume running-job order). All EASY-family
+matrix cells were regenerated after the fix (commit `6cd0101`); EASY-family numbers published
+before it are slightly pessimistic (SDSC EASY p95 BSLD: 627.93 → 585.27).
+
 ## Scope and limitations
 
 - **Policies:** FIFO/FCFS only. The Batsim FCFS EDC is the only scheduler library available in

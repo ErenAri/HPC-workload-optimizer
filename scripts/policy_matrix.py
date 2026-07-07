@@ -58,6 +58,7 @@ POLICIES = [
     "ML_BACKFILL_P50",
     "ML_BACKFILL_P10",
     "RL_TRAINED",
+    "UARP_BACKFILL",  # bundled reference plugin (hpcopt.plugins.uarp)
     "CONSERVATIVE_BACKFILL_BASELINE",
 ]
 
