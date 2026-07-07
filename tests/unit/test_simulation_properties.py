@@ -235,3 +235,39 @@ def test_metric_monotonicity(data: dict) -> None:
             assert reported_makespan >= actual_span - 1, (
                 f"{policy}: makespan {reported_makespan} < observed span {actual_span}"
             )
+
+
+def test_easy_reservation_uses_end_time_order_not_dispatch_order() -> None:
+    """Regression: the EASY shadow time must accumulate freed CPUs in
+    end-time order, not dispatch order.
+
+    Capacity 10. J1 (4 cpus) ends at t=100, J2 (4 cpus) ends at t=51 but was
+    dispatched *after* J1. Head J3 needs 8 cpus, so the true reservation is
+    t=100 (2 free + J2's 4 at t=51 is only 6). Walking running jobs in
+    dispatch order instead crosses the threshold at J2 and yields t=51,
+    which wrongly blocks J4 (completion t=62 <= 100) from backfilling.
+    """
+    from hpcopt.simulate.core import run_simulation_from_trace
+
+    trace_df = pd.DataFrame(
+        {
+            "job_id": [1, 2, 3, 4],
+            "submit_ts": [0, 1, 2, 2],
+            "runtime_actual_sec": [100, 50, 10, 60],
+            "runtime_requested_sec": [100, 50, 10, 60],
+            "requested_cpus": [4, 4, 8, 2],
+        }
+    )
+    result = run_simulation_from_trace(
+        trace_df=trace_df,
+        policy_id="EASY_BACKFILL_BASELINE",
+        capacity_cpus=10,
+        run_id="easy_reservation_order",
+        strict_invariants=True,
+    )
+    jobs = result.jobs_df.set_index("job_id")
+    # J4 backfills immediately: it fits (2 <= 10-4-4) and finishes at t=62,
+    # before the head's t=100 reservation.
+    assert int(jobs.loc[4, "start_ts"]) == 2
+    # The head starts exactly at its reservation, undelayed by the backfill.
+    assert int(jobs.loc[3, "start_ts"]) == 100

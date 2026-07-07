@@ -67,7 +67,12 @@ def run_simulation_from_trace(
     policy_context: dict[str, Any] | None = None,
 ) -> SimulationResult:
     if policy_id not in SUPPORTED_POLICIES:
-        raise ValueError(f"Unsupported policy: {policy_id}")
+        from hpcopt import plugins
+
+        if not plugins.is_registered(policy_id):
+            raise ValueError(
+                f"Unsupported policy: {policy_id}. Available: {', '.join(plugins.all_policy_ids())}"
+            )
     if capacity_cpus <= 0:
         raise ValueError("capacity_cpus must be > 0")
 
@@ -144,13 +149,22 @@ def run_simulation_from_trace(
                 )
                 for job in queue
             ),
+            # Contract (parse_state_snapshot): running_jobs sorted by
+            # (end_ts, job_id). The EASY-family reservation accumulates freed
+            # CPUs in iteration order, so dispatch order here would yield a
+            # wrong shadow time.
             running_jobs=tuple(
-                AdapterRunningJob(
-                    job_id=int(job["job_id"]),
-                    end_ts=int(job["end_ts"]),
-                    allocated_cpus=int(job["requested_cpus"]),
+                sorted(
+                    (
+                        AdapterRunningJob(
+                            job_id=int(job["job_id"]),
+                            end_ts=int(job["end_ts"]),
+                            allocated_cpus=int(job["requested_cpus"]),
+                        )
+                        for job in running
+                    ),
+                    key=lambda rj: (rj.end_ts, rj.job_id),
                 )
-                for job in running
             ),
         )
         decision = _choose_decisions(
